@@ -30,7 +30,24 @@ See these [guidelines](CONTRIBUTING_TECHNIQUE.md).
 
 ### Other Contributions
 
-Please wait until we finish this section.
+There are two categories of PRs that are welcome:
+
+1. All documentation fixes.
+
+2. PRs for issues labeled with ["contributions welcome"](https://github.com/tensorflow/model-optimization/issues?q=is%3Aissue+is%3Aopen+label%3A%22contributions+welcome%22).
+TFMOT considers these issues critical enough to fix (e.g. significant impact on user experience) and will provide basic guidance to volunteers. The list
+is intentionally kept small. Prior to starting, it'd a good idea to see if the issue is still important.
+
+For other types of PRs, file a Github issue first, explaining its importance
+to you and the community, and your willingness to create a PR. If it makes sense
+, we'll attach the "contributions welcome" label and assign you the issue.
+
+Issues with a ["good first issue" label](https://github.com/tensorflow/model-optimization/issues?utf8=%E2%9C%93&q=is%3Aopen+label%3A%22contributions+welcome%22+label%3A%22good+first+issue%22+)
+are good for new contributors.
+
+These guidelines seek to prioritize efforts that would benefit the community the most.
+Feedback is welcome.
+
 
 ## Code reviews
 
