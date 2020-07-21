@@ -129,10 +129,7 @@ class RiGLPruningConfig(PruningConfig):
       block_pooling_type='AVG'
   ):
     super(RiGLPruningConfig, self).__init__()
-    self._pruner = riglpruner.RiGLPrunger(
-        pruning_schedule=pruning_schedule,
-        block_size=block_size,
-        block_pooling_type=block_pooling_type)
+
 
   def get_config(self):
     pass
@@ -142,6 +139,10 @@ class RiGLPruningConfig(PruningConfig):
     pass
 
   def _process_layer(self, layer):
+    self._pruner = riglpruner.RiGLPrunger(
+        pruning_schedule=pruning_schedule,
+        block_size=block_size,
+        block_pooling_type=block_pooling_type)
     if isinstance(layer, prunable_layer.PrunableLayer):
       for var in layer.get_prunable_weights():
         self._variable_to_pruner_mapping[var.ref()] = self._pruner
