@@ -21,6 +21,7 @@ from tensorflow_model_optimization.python.core.sparsity.keras import prune_regis
 from tensorflow_model_optimization.python.core.sparsity.keras import prunable_layer
 from tensorflow_model_optimization.python.core.sparsity.keras import pruning_schedule as pruning_sched
 from tensorflow_model_optimization.python.core.sparsity_tf2 import pruner
+from tensorflow_model_optimization.python.core.sparsity_tf2 import riglpruner
 
 keras = tf.keras
 custom_object_scope = tf.keras.utils.custom_object_scope
@@ -98,6 +99,37 @@ class LowMagnitudePruningConfig(PruningConfig):
   ):
     super(LowMagnitudePruningConfig, self).__init__()
     self._pruner = pruner.LowMagnitudePruner(
+        pruning_schedule=pruning_schedule,
+        block_size=block_size,
+        block_pooling_type=block_pooling_type)
+
+  def get_config(self):
+    pass
+
+  @classmethod
+  def from_config(cls, config):
+    pass
+
+  def _process_layer(self, layer):
+    if isinstance(layer, prunable_layer.PrunableLayer):
+      for var in layer.get_prunable_weights():
+        self._variable_to_pruner_mapping[var.ref()] = self._pruner
+    elif prune_registry.PruneRegistry.supports(layer):
+      prune_registry.PruneRegistry.make_prunable(layer)
+      for var in layer.get_prunable_weights():
+        self._variable_to_pruner_mapping[var.ref()] = self._pruner
+
+
+class RiGLPruningConfig(PruningConfig):
+
+  def __init__(
+      self,
+      pruning_schedule=pruning_sched.ConstantSparsity(0.5, 0),
+      block_size=(1, 1),
+      block_pooling_type='AVG'
+  ):
+    super(RiGLPruningConfig, self).__init__()
+    self._pruner = riglpruner.RiGLPrunger(
         pruning_schedule=pruning_schedule,
         block_size=block_size,
         block_pooling_type=block_pooling_type)
