@@ -34,7 +34,6 @@ class Pruner(object):
 
   def preprocess_weights(self, optimizer, var, grad):
     """Preprocess the gradient if necessary"""
-    # TODO: Figure out whether to mask gradient
     return grad
 
   def postprocess_weights(self, optimizer, var, grad):

@@ -20,6 +20,8 @@ import tensorflow as tf
 from tensorflow_model_optimization.python.core.sparsity.keras import prune_registry
 from tensorflow_model_optimization.python.core.sparsity.keras import prunable_layer
 from tensorflow_model_optimization.python.core.sparsity.keras import pruning_schedule as pruning_sched
+from tensorflow_model_optimization.python.core.sparsity_tf2 import schedule as update_schedule
+from tensorflow_model_optimization.python.core.sparsity_tf2 import sparse_utils as sparse_utils
 from tensorflow_model_optimization.python.core.sparsity_tf2 import pruner
 from tensorflow_model_optimization.python.core.sparsity_tf2 import riglpruner
 
@@ -124,12 +126,28 @@ class RiGLPruningConfig(PruningConfig):
 
   def __init__(
       self,
-      pruning_schedule=pruning_sched.ConstantSparsity(0.5, 0),
+      update_schedule=update_schedule.ConstantSchedule(0.5, 0),
+      sparse_distribution=sparse_utils.PermuteOnes,
+      sparsity=0.5,
       block_size=(1, 1),
-      block_pooling_type='AVG'
+      block_pooling_type='AVG',
+      stateless=False,
+      seed=0,
+      seed_offset=0,
+      noise_std=0,
+      reinit=False
   ):
     super(RiGLPruningConfig, self).__init__()
-
+    self.update_schedule = update_schedule
+    self.overall_sparsity = sparsity
+    self.sparse_distribution = sparse_distribution
+    self.block_size = block_size
+    self.block_pooling_type = block_pooling_type
+    self._stateless = stateless
+    self._seed = seed
+    self._seed_offset = seed_offset
+    self._noise_std = noise_std
+    self._reinit_when_same = reinit
 
   def get_config(self):
     pass
@@ -138,15 +156,40 @@ class RiGLPruningConfig(PruningConfig):
   def from_config(cls, config):
     pass
 
-  def _process_layer(self, layer):
-    self._pruner = riglpruner.RiGLPrunger(
-        pruning_schedule=pruning_schedule,
-        block_size=block_size,
-        block_pooling_type=block_pooling_type)
+  def get_trainable_weights(prunable_weights):
+
+  def _process_layer(self, layer, method):
+    
     if isinstance(layer, prunable_layer.PrunableLayer):
-      for var in layer.get_prunable_weights():
-        self._variable_to_pruner_mapping[var.ref()] = self._pruner
+      curr_layer_weights = layer.get_prunable_weights()
+      sparsity = self.sparse_distribution(self.overall_sparsity)(curr_layer_weights[0.shape])
+      _pruner = riglpruner.RiGLPruner(
+        update_schedule=self.update_schedule,
+        sparsity=sparsity,
+        block_size=block_size,
+        block_pooling_type=block_pooling_type,
+        initializer=self.sparse_distribution,
+        stateless=self._stateless,
+        seed=self._seed,
+        seed_offset=self._seed_offset,
+        noise_std=self._noise_std,
+        reinit=self._reinit_when_same)
+      for var in curr_layer_weights:
+        self._variable_to_pruner_mapping[var.ref()] = _pruner
     elif prune_registry.PruneRegistry.supports(layer):
       prune_registry.PruneRegistry.make_prunable(layer)
-      for var in layer.get_prunable_weights():
-        self._variable_to_pruner_mapping[var.ref()] = self._pruner
+      curr_layer_weights = layer.get_prunable_weights()
+      sparsity = self.sparse_distribution(self.overall_sparsity)(curr_layer_weights[0.shape])
+      _pruner = riglpruner.RiGLPruner(
+        update_schedule=self.update_schedule,
+        sparsity=sparsity,
+        block_size=block_size,
+        block_pooling_type=block_pooling_type,
+        initializer=self.sparse_distribution,
+        stateless=self._stateless,
+        seed=self._seed,
+        seed_offset=self._seed_offset,
+        noise_std=self._noise_std,
+        reinit=self._reinit_when_same)
+      for var in curr_layer_weights:
+        self._variable_to_pruner_mapping[var.ref()] = _pruner
