@@ -123,9 +123,13 @@ class LowMagnitudePruningConfig(PruningConfig):
 
 
 class RiGLPruningConfig(PruningConfig):
+  """
+  Base seed that all pruners will be offset by (given an experiment id)
+  """
 
   def __init__(
       self,
+      base_seed,
       update_schedule=update_schedule.ConstantSchedule(0.5, 0),
       sparse_distribution=sparse_utils.PermuteOnes,
       sparsity=0.5,
@@ -138,6 +142,7 @@ class RiGLPruningConfig(PruningConfig):
       reinit=False
   ):
     super(RiGLPruningConfig, self).__init__()
+    self.base_seed = # add to layer id
     self.update_schedule = update_schedule
     self.overall_sparsity = sparsity
     self.sparse_distribution = sparse_distribution
@@ -162,7 +167,7 @@ class RiGLPruningConfig(PruningConfig):
     
     if isinstance(layer, prunable_layer.PrunableLayer):
       curr_layer_weights = layer.get_prunable_weights()
-      sparsity = self.sparse_distribution(self.overall_sparsity)(curr_layer_weights[0.shape])
+      sparsity = self.sparse_distribution(self.overall_sparsity)(curr_layer_weights[0].shape)
       _pruner = riglpruner.RiGLPruner(
         update_schedule=self.update_schedule,
         sparsity=sparsity,
@@ -179,7 +184,7 @@ class RiGLPruningConfig(PruningConfig):
     elif prune_registry.PruneRegistry.supports(layer):
       prune_registry.PruneRegistry.make_prunable(layer)
       curr_layer_weights = layer.get_prunable_weights()
-      sparsity = self.sparse_distribution(self.overall_sparsity)(curr_layer_weights[0.shape])
+      sparsity = self.sparse_distribution(self.overall_sparsity)(curr_layer_weights[0].shape)
       _pruner = riglpruner.RiGLPruner(
         update_schedule=self.update_schedule,
         sparsity=sparsity,
