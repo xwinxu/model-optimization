@@ -33,7 +33,8 @@ class RiGLPruningConfig(PruningConfig):
   def __init__(
       self,
       update_schedule=update_schedule.ConstantSchedule(0.5, 0),
-      sparse_distribution=sparse_utils.PermuteOnes,
+      sparse_init=sparse_utils.PermuteOnes,
+      sparse_distribution='uniform',
       sparsity=0.5,
       block_size=(1, 1),
       block_pooling_type='AVG',
@@ -46,6 +47,7 @@ class RiGLPruningConfig(PruningConfig):
     super(RiGLPruningConfig, self).__init__()
     self.update_schedule = update_schedule
     self.overall_sparsity = sparsity
+    self.sparse_init = sparse_init
     self.sparse_distribution = sparse_distribution
     self.block_size = block_size
     self.block_pooling_type = block_pooling_type
@@ -62,19 +64,27 @@ class RiGLPruningConfig(PruningConfig):
   def from_config(cls, config):
     pass
 
+  def get_epsilon(self, model):
+    """Calculates the ERK ratio scaling factor 
+    """
+    # TODO(xwinxu): implement when ERK is implemented
+    return
+
   def get_trainable_weights(prunable_weights):
 
   def _process_layer(self, layer, method):
     
     if isinstance(layer, prunable_layer.PrunableLayer):
       curr_layer_weights = layer.get_prunable_weights()
-      sparsity = self.sparse_distribution(self.overall_sparsity)(curr_layer_weights[0.shape])
+      sparsity = self.sparse_init(self.overall_sparsity)(curr_layer_weights[0.shape])
+      epsilon = 1. if self.sparse_distribution == 'uniform' else get_epsilon(self._model)
+      sparsity = sparsity * epsilon
       _pruner = riglpruner.RiGLPruner(
         update_schedule=self.update_schedule,
         sparsity=sparsity,
         block_size=block_size,
         block_pooling_type=block_pooling_type,
-        initializer=self.sparse_distribution,
+        initializer=self.sparse_init,
         stateless=self._stateless,
         seed=self._seed,
         seed_offset=self._seed_offset,
@@ -85,13 +95,15 @@ class RiGLPruningConfig(PruningConfig):
     elif prune_registry.PruneRegistry.supports(layer):
       prune_registry.PruneRegistry.make_prunable(layer)
       curr_layer_weights = layer.get_prunable_weights()
-      sparsity = self.sparse_distribution(self.overall_sparsity)(curr_layer_weights[0.shape])
+      sparsity = self.sparse_init(self.overall_sparsity)(curr_layer_weights[0.shape])
+      epsilon = 1. if self.sparse_distribution == 'uniform' else get_epsilon(self._model)
+      sparsity = sparsity * epsilon
       _pruner = riglpruner.RiGLPruner(
         update_schedule=self.update_schedule,
         sparsity=sparsity,
         block_size=block_size,
         block_pooling_type=block_pooling_type,
-        initializer=self.sparse_distribution,
+        initializer=self.sparse_init,
         stateless=self._stateless,
         seed=self._seed,
         seed_offset=self._seed_offset,
