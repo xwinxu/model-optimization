@@ -35,7 +35,7 @@ class RiGLPruner(pruner.Pruner):
   """
 
   def __init__(self,
-      update_schedule=update_schedule.ConstantSchedule(0.5, 0),
+      update_schedule=update_schedule.ConstantSchedule(0.1, 0),
       sparsity=0.5,
       block_size=(1,1),
       block_pooling_type='AVG',
@@ -52,7 +52,8 @@ class RiGLPruner(pruner.Pruner):
 
     Args:
       update_schedule: A `PruningSchedule` object that controls pruning rate
-        throughout training.
+        throughout training. The first arg is fraction of connections to drop
+        during the update, the second is the starting step to begin updating.
       sparsity: layer specific sparsity at which the dynamic sparse training method uses
       block_size: The dimensions (height, weight) for the block sparse pattern
         in rank-2 weight tensors.
@@ -65,11 +66,10 @@ class RiGLPruner(pruner.Pruner):
       grow_init: string ('zeros, 'random_normal', 'random_uniform', 'initial_value') way
         to initialize new connections.
     """
-    super(RiGLPruner, self).__init__(
-        update_schedule, block_size, block_pooling_type)
+    super(RiGLPruner, self).__init__()
     self.target_sparsity = sparsity
     self.update_schedule = update_schedule
-    self._block_size = block_size
+    self._block_size = list(block_size)
     self.block_pooling_type = block_pooling_type
     self._stateless = stateless
     self._seed = seed
@@ -82,11 +82,12 @@ class RiGLPruner(pruner.Pruner):
     deterministic_initializer = sparse_utils.PermuteOnes(self.target_sparsity)
     optimizer.add_slot(var, 'mask', initializer=deterministic_initializer)
 
-  def _validate_block(self, var):
+  def _validate_block(self, update_vars):
     if self._block_size != [1, 1]:
-      if var.get_shape().ndims != 2:
-        raise ValueError('Block Sparsity can only be used for layers which '
-                          'have 2-dimensional weights.')
+      for _, weight, _ in update_vars:
+        if weight.get_shape().ndims != 2:
+          raise ValueError('Block Sparsity can only be used for layers which '
+                           'have 2-dimensional weights.')
 
   def _random_normal(self, *args, **kwargs):
     """Gaussian noise distribution"""
@@ -133,21 +134,6 @@ class RiGLPruner(pruner.Pruner):
                             tf.zeros_like(opt_var), opt_var)
       opt_var.assign(new_values)
 
-  def _generic_top_k(self, scores, mask, n_new, n_total):
-     # sort the entire array so that it can be constant for TPUs
-    _, sorted_idx = tf.math.top_k(
-      tf.reshape(scores, (-1), k=n_total)
-    )
-    expanded_sorted_idx = tf.expand_dims(sorted_idx, 1)
-    new_values = tf.where(
-      tf.range(n_total) < n_new,
-      tf.ones_like(sorted_idx, dtype=mask.dtype),
-      tf.zeros_like(sorted_idx, dtype=mask.dtype)
-    )
-    updated_mask = tf.scatter_nd(expanded_sorted_idx, new_values, new_values.shape)
-
-    return updated_mask
-
   def _get_new_connections(self, drop_regrow_reinit, grown_mask_reshaped, mask):
     """When dropped and regrown connections are the same there are two options:
       1. keep original value
@@ -162,7 +148,7 @@ class RiGLPruner(pruner.Pruner):
       )
     return new_connections
 
-  def _get_grow_tensor(weight, method):
+  def _get_grow_tensor(self, weight, method):
     if method == 'zeros':
       grow_tensor = tf.zeros_like(weight, dtype=weight.dtype)
     elif method == 'random_normal':
@@ -177,6 +163,21 @@ class RiGLPruner(pruner.Pruner):
     else:
       raise ValueError('The initialization for growing %s is not a valid option.' % method)
     return grow_tensor
+
+  def _generic_top_k(self, scores, mask, n_to_modify, n_total):
+     # sort the entire array so that it can be constant for TPUs
+    _, sorted_idx = tf.math.top_k(
+      tf.reshape(scores, [-1]), k=n_total
+    )
+    expanded_sorted_idx = tf.expand_dims(sorted_idx, 1)
+    new_values = tf.where(
+      tf.range(n_total) < n_to_modify,
+      tf.ones_like(sorted_idx, dtype=mask.dtype),
+      tf.zeros_like(sorted_idx, dtype=mask.dtype)
+    )
+    updated_mask = tf.scatter_nd(expanded_sorted_idx, new_values, new_values.shape)
+
+    return updated_mask
 
   def _update_mask(self, step, update_fraction, mask, weight, grad):
     """Called by _maybe_update_block_mask.
@@ -213,8 +214,7 @@ class RiGLPruner(pruner.Pruner):
       grown_mask = self._generic_top_k(grow_scores_lifted, mask, n_prune, n_total)
       # ensure that masks are disjoint
       tf.debugging.Assert(
-        tf.math.equal(tf.reduce_sum(dropped_mask * grown_mask, 0.), [dropped_mask, grown_mask])
-      )
+        tf.math.equal(tf.reduce_sum(dropped_mask * grown_mask), 0.), [dropped_mask, grown_mask])
 
       grown_mask_reshaped = tf.reshape(grown_mask, mask.shape)
       # set the values of the new connections
@@ -298,7 +298,7 @@ class RiGLPruner(pruner.Pruner):
       new_connections: if reset_momentum is True, the a binary mask for
         where new weights were re-introduced into the mask
     """
-    self._validate_block(var)
+    self._validate_block(update_vars)
     should_update, update_fraction = self.update_schedule(step)
     new_connections = None
     reset_momentum = False
@@ -358,5 +358,5 @@ class RiGLPruner(pruner.Pruner):
     self._apply_mask(var, mask)
     # ensure there is not momentum values for new connections
     if reset_momentum:
-      self._reset_momentum(optimizer, weight, new_connections)
+      self._reset_momentum(optimizer, var, new_connections)
     

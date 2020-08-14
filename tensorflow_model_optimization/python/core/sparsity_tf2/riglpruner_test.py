@@ -28,6 +28,8 @@ import tensorflow as tf
 from tensorflow.python.keras import keras_parameterized
 from tensorflow_model_optimization.python.core.sparsity_tf2 import schedule
 from tensorflow_model_optimization.python.core.sparsity_tf2 import riglpruner as pruner
+from tensorflow_model_optimization.python.core.sparsity_tf2 import pruning_optimizer
+from tensorflow_model_optimization.python.core.sparsity_tf2 import pruning_config
 
 dtypes = tf.dtypes
 test = tf.test
@@ -45,8 +47,10 @@ def _dummy_gradient(x, dtype=tf.float32):
     base_type = x.dtype
   except:
     base_type = dtype
-  grad = tf.ones_like(x, dtype=base_type)
-  return grad
+  # must shuffle otherwise each gradient update will be the same and 
+  # connections are never regrown
+  grad = tf.random.shuffle(np.linspace(1., 100., 100))
+  return tf.Variable(grad, dtype=base_type)
 
 class RiglPruningTest(test.TestCase, parameterized.TestCase):
 
@@ -56,54 +60,17 @@ class RiglPruningTest(test.TestCase, parameterized.TestCase):
     self.block_pooling_type = "AVG"
     self.target_sparsity = 0.5
     self.initial_drop_fraction = 0.3 # i.e. 0.3 * target sparsity per layer, annealed by schedule below
-    self.constant_updater = schedule.ConstantSparsity(self.initial_drop_fraction, 0, 100, 1)
-    self.skip_updater = schedule.ConstantSparsity(self.initial_drop_fraction, 0, 100, 2)
-    self.skip_update = sccche
+    self.constant_updater = schedule.ConstantSchedule(self.initial_drop_fraction, 0, 100, 1)
+    self.skip_updater = schedule.ConstantSchedule(self.initial_drop_fraction, 0, 100, 2)
+    self.updater = schedule.ConstantSchedule
     self.grad = _dummy_gradient
-    self.seed = 0
+    self.seed = [0, 1]
     self.noise_std = 1
     self.reinit = False
     self.stateless = True
-    self.grow_init = ('zeros', 'random normal', 'random uniform')
-
-  # setUp() lies outside of the "eager scope" that wraps the test cases
-  # themselves, resulting in initializing graph tensors instead of eager
-  # tensors when testing eager execution.
-
-  # def testMaskNoChangeBeforeandAfter(self):
-  #   weight = tf.Variable(np.linspace(1.0, 100.0, 100))
-  #   weight_dtype = weight.dtype.base_dtype
-  #   mask = tf.Variable(
-  #       tf.ones(weight.get_shape(), dtype=weight_dtype),
-  #       dtype=weight_dtype)
-  #   sparse_vars = [(mask, weight, self.grad(weight))]
-
-  #   p = pruner.RiGLPruner(
-  #     update_schedule=self.skip_updater,
-  #     sparsity=self.target_sparsity,
-  #     block_size=self.block_size,
-  #     block_pooling_type=self.block_pooling_type,
-  #     stateless=self.stateless,
-  #     seed=self.seed,
-  #     noise_std=self.noise_std,
-  #     reinit=self.reinit
-  #   )
-
-  #   optimizer = tf.keras.optimizers.SGD(learning_rate=0.01)
-  #   optimizer.iterations.assign(0)
-  #   p.create_slots(optimizer, weights)
-
-  #   mask_before_update = optimizer.get_slot(weight, 'mask').read_value()
-  #   self.assertAllEqual(np.count_nonzero(mask_before_update), self.target_sparisty)
-
-  #   next_step = optimizer.iterations.assign_add(1)
-  #   reset_momentum, new_connections = p.update_masks(sparse_vars, next_step)
-  #   self.assertAllEqual(reset_momentum, False)
-  #   self.assertAllEqual(new_connections, None)
-
-  #   mask_after_update = mask.read_value()
-  #   self.assertAllEqual(np.count_nonzero(mask_after_update), self.target_sparsity)
-  #   self.assertAllEqual(mask_after_update, mask_before_update) # no update
+    self.grow_init_zeros = 'zeros'
+    self.grow_init_randn = 'random normal'
+    self.grow_init_randunif = 'random uniform'
 
   def testGetGrowGrads(self):
     mask = tf.ones((100))
@@ -118,46 +85,259 @@ class RiglPruningTest(test.TestCase, parameterized.TestCase):
       stateless=self.stateless,
       seed=self.seed,
       noise_std=self.noise_std,
-      reinit=self.reinit
+      reinit=self.reinit,
+      grow_init=self.grow_init_zeros
     )
 
     grow_grads = p._get_grow_grads(mask, grads)
     self.assertAllEqual(grow_grads, expected_grads)
 
-  # def testMaskChangesAccordingtoSchedule(self):
-  #   weight = tf.Variable(np.linspace(1.0, 100.0, 100))
-  #   weight_dtype = weight.dtype.base_dtype
-  #   mask = tf.Variable(
-  #       tf.ones(weight.get_shape(), dtype=weight_dtype),
-  #       dtype=weight_dtype)
-  #   sparse_vars = [(mask, weight, self.grad(weight))]
+  def testMaskNoChangeBeforeandAfter(self):
+    weight = tf.Variable(np.linspace(1.0, 100.0, 100))
+    weight_dtype = weight.dtype.base_dtype
+    mask = tf.Variable(
+        tf.ones(weight.get_shape(), dtype=weight_dtype),
+        dtype=weight_dtype)
+    sparse_vars = [(mask, weight, self.grad(weight))]
 
-  #   p = pruner.RiGLPruner(
-  #     update_schedule=self.skip_updater,
-  #     sparsity=self.target_sparsity,
-  #     block_size=self.block_size,
-  #     block_pooling_type=self.block_pooling_type,
-  #     stateless=self.stateless,
-  #     seed=self.seed,
-  #     noise_std=self.noise_std,
-  #     reinit=self.reinit
-  #   )
+    p = pruner.RiGLPruner(
+      update_schedule=self.skip_updater,
+      sparsity=self.target_sparsity,
+      block_size=self.block_size,
+      block_pooling_type=self.block_pooling_type,
+      stateless=self.stateless,
+      seed=self.seed,
+      noise_std=self.noise_std,
+      reinit=self.reinit
+    )
 
-  #   optimizer = tf.keras.optimizers.SGD(learning_rate=0.01)
-  #   optimizer.iterations.assign(0)
-  #   p.create_slots(optimizer, weights)
+    optimizer = tf.keras.optimizers.SGD(learning_rate=0.01)
+    optimizer.iterations.assign(0)
+    p.create_slots(optimizer, weight)
 
-  #   mask_before_update = optimizer.get_slot(weight, 'mask').read_value()
+    mask_before_update = optimizer.get_slot(weight, 'mask').read_value()
+    before_sparsity = np.count_nonzero(mask_before_update) / tf.size(mask_before_update)
+    self.assertAllEqual(before_sparsity, self.target_sparsity)
 
-  # def testDropLowestMagnitudeWeights(self):
+    next_step = optimizer.iterations.assign_add(1)
+    reset_momentum, new_connections = p.update_masks(sparse_vars, next_step)
+    self.assertAllEqual(reset_momentum, False)
+    self.assertAllEqual(new_connections, None)
 
-  # def testGrowHighestMagnitudeGradients(self):
+    mask_after_update = optimizer.get_slot(weight, 'mask').read_value()
+    after_sparsity = np.count_nonzero(mask_after_update) / tf.size(mask_before_update)
+    self.assertAllEqual(after_sparsity, self.target_sparsity)
+    self.assertAllEqual(mask_after_update, mask_before_update) # no update
 
-  # def testRegrownConnections(self):
+  @parameterized.parameters((3, 7, 2), (1, 5, 3), (0, 4, 1))
+  def testDropFractionZeroNoMaskChange(self, begin_step, end_step, freq_update):
+    weight = tf.Variable(np.linspace(1.0, 100.0, 100))
+    weight_dtype = weight.dtype.base_dtype
+    mask = tf.Variable(
+        tf.ones(weight.get_shape(), dtype=weight_dtype),
+        dtype=weight_dtype)
+    sparse_vars = [(mask, weight, self.grad(weight))]
+    drop_ratio = 0.
 
-  # def testDropandGrowConnections(self):
-  #   return
+    p = pruner.RiGLPruner(
+      update_schedule=self.updater(drop_ratio, begin_step, end_step, freq_update),
+      sparsity=self.target_sparsity,
+      block_size=self.block_size,
+      block_pooling_type=self.block_pooling_type,
+      stateless=self.stateless,
+      seed=self.seed,
+      noise_std=self.noise_std,
+      reinit=self.reinit
+    )
 
+    optimizer = tf.keras.optimizers.SGD(learning_rate=0.01)
+    optimizer.iterations.assign(0)
+    p.create_slots(optimizer, weight)
+
+    for _ in tf.range(end_step + 2):
+      mask_before_update = optimizer.get_slot(weight, 'mask').read_value()
+      before_sparsity = np.count_nonzero(mask_before_update) / tf.size(mask_before_update)
+      step = optimizer.iterations
+      p.update_masks(sparse_vars, step)
+      mask_after_update = optimizer.get_slot(weight, 'mask').read_value()
+      after_sparsity = np.count_nonzero(mask_after_update) / tf.size(mask_before_update)
+      self.assertAllEqual(mask_before_update, mask_after_update)
+
+  @parameterized.parameters(
+    (0.7,), (0.1,), (0.3,), (0.5,), 
+  )
+  def testUpdatesAccordingtoSchedule(self, drop_ratio):
+    # unlike previous tests, this checks that the masked weights
+    # maintain consistent sparsity and that there is some change in the mask.
+    weight = tf.Variable(np.linspace(1.0, 100.0, 100))
+    weight_dtype = weight.dtype.base_dtype
+    mask = tf.Variable(
+        tf.ones(weight.get_shape(), dtype=weight_dtype),
+        dtype=weight_dtype)
+    grad = self.grad(weight)
+    sparse_vars = [(mask, weight, grad)]
+    sparsity_params = {
+      'pruning_schedule': self.updater(drop_ratio, 1, 4, 2)
+    } # dummy just for using the pruning optimizer
+    sparsity_config = pruning_config.LowMagnitudePruningConfig(**sparsity_params) # dummy
+
+    p = pruner.RiGLPruner(
+      update_schedule=self.updater(drop_ratio, 1, 4, 2), # update iter 1 and 3
+      sparsity=self.target_sparsity,
+      block_size=self.block_size,
+      block_pooling_type=self.block_pooling_type,
+      stateless=self.stateless,
+      seed=self.seed,
+      noise_std=self.noise_std,
+      reinit=self.reinit
+    )
+
+    _optimizer = tf.keras.optimizers.SGD(learning_rate=0.01)
+    optimizer = pruning_optimizer.PruningOptimizer(_optimizer, sparsity_config)
+    optimizer.iterations.assign(0)
+
+    p.create_slots(optimizer, weight)
+
+    def _train(optimizer, weight):
+      expected_iter1 = tf.zeros_like(weight, dtype=weight.dtype.base_dtype) * -1
+      expected_iter3 = tf.zeros_like(weight, dtype=weight.dtype.base_dtype) * -1
+      for i in tf.range(0, 5):
+        mask_before_update = optimizer.get_slot(weight, 'mask').read_value()
+        mask_before_update3 = optimizer.get_slot(weight, 'mask').read_value()
+        before_sparsity = tf.math.count_nonzero(mask_before_update, dtype=tf.int32) / tf.size(mask_before_update)
+        grad = p.preprocess_weights(optimizer, weight, self.grad(weight))
+        weight.assign(tf.math.add(weight, sample_noise(i)))
+        grad.assign(tf.math.add(grad, sample_noise(i)))
+        p.postprocess_weights(optimizer, weight, grad)
+        if i == 1:
+          mask_after_update = optimizer.get_slot(weight, 'mask').read_value()
+          after_sparsity = tf.math.count_nonzero(mask_after_update, dtype=tf.int32) / tf.size(mask_before_update)
+          expected_iter1 = {'before': mask_before_update, 'after': mask_after_update, 
+                            'sparsity': after_sparsity}
+        elif i == 3:
+          mask_after_update = optimizer.get_slot(weight, 'mask').read_value()
+          after_sparsity = tf.math.count_nonzero(mask_after_update, dtype=tf.int32) / tf.size(mask_before_update3)
+          expected_iter3 = {'before': mask_before_update3, 'after': mask_after_update, 
+                            'sparsity': after_sparsity}
+        optimizer.iterations.assign_add(1)
+      return expected_iter1, expected_iter3
+
+    expected1, expected2 = _train(optimizer, weight)
+    self.assertAllEqual(expected1['sparsity'], self.target_sparsity)
+    self.assertAllEqual(expected2['sparsity'], self.target_sparsity)
+    # assert that sparsity does not change
+    self.assertAllEqual(tf.reduce_sum(expected1['before']), tf.reduce_sum(expected1['after']))
+    self.assertAllEqual(tf.reduce_sum(expected2['before']), tf.reduce_sum(expected2['after']))
+    # assert there are some changes in the mask during each update
+    self.assertNotAllEqual(expected1['before'], expected1['after'])
+    self.assertNotAllEqual(expected2['before'], expected2['after'])
+    del expected1, expected2
+
+    # TODO(xwinxu): test inside a tf.function
+    # weight2 = tf.Variable(np.linspace(1.0, 100.0, 100))
+    # weight2_dtype = weight2.dtype.base_dtype
+    # mask = tf.Variable(
+    #     tf.ones(weight2.get_shape(), dtype=weight_dtype),
+    #     dtype=weight_dtype)
+    # grad = self.grad(weight2)
+    # sparse_vars = [(mask, weight2, grad)]
+    # _optimizer = tf.keras.optimizers.SGD(learning_rate=0.01)
+    # optimizer = pruning_optimizer.PruningOptimizer(_optimizer, sparsity_config)
+    # optimizer.iterations.assign(0)
+    # p.create_slots(optimizer, weight2)
+    # expected1, expected2 = tf.function(_train)(optimizer, weight2)
+    # self.assertAllEqual(expected1['sparsity'], self.target_sparsity)
+    # self.assertAllEqual(expected2['sparsity'], self.target_sparsity)
+    # # assert that sparsity does not change
+    # self.assertAllEqual(tf.reduce_sum(expected1['before']), tf.reduce_sum(expected1['after']))
+    # self.assertAllEqual(tf.reduce_sum(expected2['before']), tf.reduce_sum(expected2['after']))
+    # # assert there are some changes in the mask during each update
+    # self.assertNotAllEqual(expected1['before'], expected1['after'])
+    # self.assertNotAllEqual(expected2['before'], expected2['after'])
+
+  def testZeroInitGrownConnections(self):
+    # new connections are initialized to zeros
+    weight = tf.Variable(np.linspace(1.0, 100.0, 100))
+    weight_dtype = weight.dtype.base_dtype
+    mask = tf.Variable(
+        tf.ones(weight.get_shape(), dtype=weight_dtype),
+        dtype=weight_dtype)
+    grad = self.grad(weight)
+    sparse_vars = [(mask, weight, grad)]
+    drop_ratio = 0.5
+    sparsity_params = {
+      'pruning_schedule': self.updater(drop_ratio, 0, 4, 1)
+    }
+    sparsity_config = pruning_config.LowMagnitudePruningConfig(**sparsity_params) # dummy
+
+    p = pruner.RiGLPruner(
+      update_schedule=self.updater(drop_ratio, 0, 4, 4), # update iter 1 and 3
+      sparsity=self.target_sparsity,
+      block_size=self.block_size,
+      block_pooling_type=self.block_pooling_type,
+      stateless=self.stateless,
+      seed=self.seed,
+      noise_std=self.noise_std,
+      reinit=self.reinit
+    )
+
+    optimizer = pruning_optimizer.PruningOptimizer(
+      tf.keras.optimizers.SGD(learning_rate=0.01), sparsity_config)
+    optimizer.iterations.assign(0)
+
+    p.create_slots(optimizer, weight)
+   
+    def weight_mask_op(pruning_vars): # TODO: to mask or not to mask
+      values_and_vars = []
+      for mask, weight, _ in  pruning_vars:
+        # weight.assign(tf.math.multiply(weight, mask))
+        return tf.math.multiply(weight, mask)
+
+    def train(optimizer, weight, sparse_vars):
+      # expected = tf.zeros_like(weight, dtype=weight.dtype.base_dtype) * -1
+      expected = []
+      # iterate until all mask updates are complete
+      for i in tf.range(4 + 1):
+        mask_before_update = optimizer.get_slot(weight, 'mask').read_value()
+        weight_before_update = weight.read_value()
+        before_sparsity = tf.math.count_nonzero(mask_before_update, dtype=tf.int32) / tf.size(mask_before_update)
+        grad = p.preprocess_weights(optimizer, weight, self.grad(weight))
+        weight.assign(tf.math.add(weight, sample_noise(i)))
+        grad.assign(tf.math.add(grad, sample_noise(i)))
+        p.postprocess_weights(optimizer, weight, grad)
+        mask_after_update = optimizer.get_slot(weight, 'mask').read_value()
+        # weight_after_update = weight.read_value()
+        weight_after_update = weight_mask_op(sparse_vars)
+        after_sparsity = tf.math.count_nonzero(mask_after_update, dtype=tf.int32) / tf.size(mask_before_update)
+        # sum the values of the new connections
+        new_weights = weight_after_update[tf.math.logical_and(mask_before_update == 0, mask_after_update == 1)]
+        expected.append(tf.math.reduce_all(new_weights == 0))
+        optimizer.iterations.assign_add(1)
+      
+      return [bool(j) for j in expected]
+
+    expected = train(optimizer, weight, sparse_vars)
+    self.assertTrue(np.all(expected) == True)
+
+    # weight = tf.Variable(np.linspace(1.0, 100.0, 100))
+    # weight_dtype = weight.dtype.base_dtype
+    # mask = tf.Variable(
+    #     tf.ones(weight.get_shape(), dtype=weight_dtype),
+    #     dtype=weight_dtype)
+    # grad = self.grad(weight)
+    # sparse_vars = [(mask, weight, grad)]
+    # sparsity_params = {
+    #   'pruning_schedule': self.updater(drop_ratio, 0, 4, 1)
+    # }
+    # sparsity_config = pruning_config.LowMagnitudePruningConfig(**sparsity_params) # dummy
+    # optimizer = pruning_optimizer.PruningOptimizer(
+    #   tf.keras.optimizers.SGD(learning_rate=0.01), sparsity_config)
+    # optimizer.iterations.assign(0)
+
+    # p.create_slots(optimizer, weight)
+    
+    # expected_tf_function = tf.function(train)(optimizer, weight, sparse_vars)
+    # self.assertTrue(np.all(expected) == True)
 
 if __name__ == "__main__":
   test.main()

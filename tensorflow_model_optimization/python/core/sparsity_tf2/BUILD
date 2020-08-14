@@ -70,6 +70,7 @@ py_library(
     visibility = ["//visibility:public"],
     deps = [
         "//tensorflow_model_optimization/python/core/sparsity/keras:pruning_utils",
+        "//tensorflow_model_optimization/python/core/sparsity/keras:pruning_schedule",
         # tensorflow dep1,
         # python:summary tensorflow dep2,
     ],
@@ -97,6 +98,7 @@ py_library(
     deps = [
         "//tensorflow_model_optimization/python/core/sparsity/keras:pruning_utils",
         "//tensorflow_model_optimization/python/core/sparsity_tf2:sparse_utils",
+        "//tensorflow_model_optimization/python/core/sparsity_tf2:pruner",
         # tensorflow dep1,
         # python:summary tensorflow dep2,
     ],
@@ -150,6 +152,8 @@ py_test(
         ":riglpruner",
         ":pruner",
         ":schedule",
+        "//tensorflow_model_optimization/python/core/sparsity_tf2:pruning_optimizer",
+        "//tensorflow_model_optimization/python/core/sparsity_tf2:pruning_config"
         # numpy dep1,
         # python/keras tensorflow dep2,
     ],
