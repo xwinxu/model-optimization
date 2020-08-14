@@ -76,7 +76,6 @@ py_library(
     ],
 )
 
-
 py_library(
     name = "lthpruner",
     srcs = ["lthpruner.py"],
@@ -143,7 +142,6 @@ py_test(
 
 
 py_test(
-    name = "riglpruner_test",
     size = "medium",
     srcs = ["riglpruner_test.py"],
     srcs_version = "PY2AND3",
@@ -160,8 +158,6 @@ py_test(
 )
 
 py_test(
-    name = "sparse_utils_test",
-    size = "medium",
     srcs = ["sparse_utils_test.py"],
     srcs_version = "PY2AND3",
     visibility = ["//visibility:public"],

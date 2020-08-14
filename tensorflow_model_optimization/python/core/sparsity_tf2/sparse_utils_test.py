@@ -114,7 +114,7 @@ class SparseUtilsTest(test.TestCase, parameterized.TestCase):
       seed += 1
     average_initialization = tf.math.reduce_mean(sparse_matrices_bern, axis=0)
     expected_initialization = tf.constant(ratio, shape=shape)
-    self.assertAllClose(expected_initialization, average_initialization, rtol=204e-3)
+    self.assertAllClose(expected_initialization, average_initialization, rtol=2.1e-1)
 
   @parameterized.parameters(
     zip(itertools.product((0.4,), NOSMALL_SHAPES), MIDPOINTS)
@@ -136,6 +136,7 @@ class SparseUtilsTest(test.TestCase, parameterized.TestCase):
       sparse_matrices_perm.append(tf.math.reduce_mean(matrix_midpoint_idx))
       seed += 1
     average_midpoints = tf.math.reduce_mean(sparse_matrices_perm, axis=0)
+    # here we are checking the midpoint index of a flattened weight matrix
     expected_midpoints = tf.constant(midpoint) # broadcasts
     # expect that each entry in the matrix is "on"/1 in expectation, ratio number of times
     self.assertAllClose(expected_midpoints, average_midpoints, atol=1.)
@@ -162,17 +163,13 @@ class SparseUtilsTest(test.TestCase, parameterized.TestCase):
 
   @parameterized.parameters(
     ((30, 4), 0.5, 60), 
-    ((1, 2, 1, 4), 0.8, 7), 
+    ((1, 2, 1, 4), 0.8, 7), # expected 7 because we `ceil` instead of round.
     ((30,), 0.1, 3)
   )
   def testBernouilliMatrixFraction(self, shape, ratio, expected_ones):
     # Check that the mean of ones_count is approximately
     # ratio * num_elements_in_shape.
-    matrix = tf.ones(shape)
-    self.assertAllEqual(shape, matrix.shape)
-
     seed = 0
-
     counts = []
     for _ in range(400):
       output = sparse_utils.Bernouilli(ratio)(shape, seed=seed)
@@ -181,7 +178,6 @@ class SparseUtilsTest(test.TestCase, parameterized.TestCase):
       self.assertAllEqual(output.shape, shape)
       seed += 1
     mean_counts = np.mean(counts, axis=0)
-    stdev_counts = np.std(counts, axis=0)
     self.assertAllClose(mean_counts, expected_ones, rtol=8e-2)
 
   @parameterized.parameters(
@@ -198,26 +194,6 @@ class SparseUtilsTest(test.TestCase, parameterized.TestCase):
       self.assertAllEqual(output.shape, shape)
       ones_count = tf.math.count_nonzero(output, dtype=tf.int32)
       self.assertAllEqual(ones_count, expected_ones)
-
-  # @parameterized.parameters(
-  #   ((30, 4),), ((1, 2, 1, 4),), ((3,3),)
-  # )
-  # def testMatrixDeterminism(self, shape):
-  #   matrix1 = tf.ones(shape)
-  #   matrix2 = tf.ones(shape)
-  #   self.assertAllEqual(shape, matrix1.shape)
-  #   self.assertAllEqual(shape, matrix2.shape)
-
-  #   for ratio in RATIOS:
-  #   # ratio = 0.4
-  #     permuteones = sparse_utils.PermuteOnes(ratio)
-  #     for seed in self.seeds:
-  #       # seed = 5
-  #       matrix1_sparse = permuteones(shape=shape, seed=seed)
-  #       matrix2_sparse = permuteones(shape=shape, seed=seed)
-  #       # print(matrix1_sparse, matrix2_sparse)
-  #       self.assertAllClose(matrix1_sparse, matrix2_sparse, rtol=1.)
-  #     del permuteones
 
 if __name__ == '__main__':
   test.main()
