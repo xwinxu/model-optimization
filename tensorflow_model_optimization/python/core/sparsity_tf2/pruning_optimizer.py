@@ -26,7 +26,8 @@ tf.keras.utils.register_keras_serializable(package='tfmot',
                                            name='PruningOptimizer')
 class PruningOptimizer(tf.keras.optimizers.Optimizer):
 
-  def __init__(self, optimizer, pruning_config):
+  def __init__(self, optimizer, pruning_config, name='tfmot_pruning_optimizer'):
+    super(PruningOptimizer, self).__init__(name)
     self._optimizer = tf.keras.optimizers.get(optimizer)
     self._pruning_config = pruning_config
 

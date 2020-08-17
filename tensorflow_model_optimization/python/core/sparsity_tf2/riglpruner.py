@@ -20,6 +20,7 @@ from __future__ import print_function
 
 import tensorflow as tf
 from absl import logging
+from functools import partial
 
 from tensorflow.python.ops import summary_ops_v2
 from tensorflow.python.summary import summary as summary_ops_v1
@@ -39,7 +40,6 @@ class RiGLPruner(pruner.Pruner):
       sparsity=0.5,
       block_size=(1,1),
       block_pooling_type='AVG',
-      stateless=True,
       seed=0,
       noise_std=0,
       reinit=False,
@@ -59,57 +59,56 @@ class RiGLPruner(pruner.Pruner):
         in rank-2 weight tensors.
       block_pooling_type: (optional) The function to use to pool weights in the
         block. Must be 'AVG' or 'MAX'.
-      stateless: whether or not being run on TPU/multi-GPU workers.
       seed: assigned by PruningConfig (base added) for multiworker consistency in random processes.
       reinit: boolean for whether to reinitialize a connection that was dropped and regrown to 
-        its original value, or to set it to 0.
+        its original value, or to set it to 0 otherwise.
       grow_init: string ('zeros, 'random_normal', 'random_uniform', 'initial_value') way
-        to initialize new connections.
+        to initialize new connections (i.e. for a connection that was dropped and then grown, 
+        this is to decide how these newly grown weights are initialized),
     """
     super(RiGLPruner, self).__init__()
     self.target_sparsity = sparsity
     self.update_schedule = update_schedule
-    self._block_size = list(block_size)
+    self._block_size = block_size
     self.block_pooling_type = block_pooling_type
-    self._stateless = stateless
     self._seed = seed
     self._noise_std = noise_std
     self._drop_regrow_reinit = reinit
     self._grow_init_method = grow_init
+    if self._grow_init_method not in ('zeros', 'random_normal', 'random_uniform'):
+      raise ValueError('The initialization for growing %s is not a valid option.' % grow_init)
   
   def create_slots(self, optimizer, var):
     base_dtype = var.dtype
-    deterministic_initializer = sparse_utils.PermuteOnes(self.target_sparsity)
+    _deterministic_initializer = sparse_utils.PermuteOnes(self.target_sparsity)
+    kwargs = {'dtype': base_dtype, 'seed': self._seed}
+    deterministic_initializer = partial(_deterministic_initializer, **kwargs)
     optimizer.add_slot(var, 'mask', initializer=deterministic_initializer)
 
   def _validate_block(self, update_vars):
-    if self._block_size != [1, 1]:
+    if self._block_size != (1, 1):
       for _, weight, _ in update_vars:
         if weight.get_shape().ndims != 2:
           raise ValueError('Block Sparsity can only be used for layers which '
                            'have 2-dimensional weights.')
 
-  def _random_normal(self, *args, **kwargs):
+  def _random_normal(self, step, *args, **kwargs):
     """Gaussian noise distribution"""
-    if self._stateless:
-      kwargs['seed'] = self._seed
-      return tf.random.stateless_normal(*args, **kwargs)
-    return tf.random.normal(*args, **kwargs)
+    kwargs['seed'] = tf.cast(tf.stack([self._seed, step]), tf.int32)
+    return tf.random.stateless_normal(*args, **kwargs)
 
-  def _random_uniform(self, *args, **kwargs):
+  def _random_uniform(self, step, *args, **kwargs):
     """Uniform noise distribution"""
-    if self._stateless:
-      kwargs['seed'] = self._seed
-      return tf.random.stateless_uniform(*args, **kwargs)
-    return tf.random.normal(*args, **kwargs)
+    kwargs['seed'] = tf.cast(tf.stack([self._seed, step]), tf.int32)
+    return tf.random.stateless_uniform(*args, **kwargs)
 
   def _get_grow_grads(self, mask, grad):
-    """Grow connections baased on gradient information.
+    """Grow connections based on gradient information.
     """
     grad_scores = tf.math.abs(grad)
     return grad_scores
 
-  def _get_drop_weights(self, mask, weight, noise_std=0):
+  def _get_drop_weights(self, mask, weight, noise_std=0, step=0):
     """
     Drop connections based on weight magnitude.
     """
@@ -118,7 +117,7 @@ class RiGLPruner(pruner.Pruner):
     # add noise to break ties, although the possibility is very low
     if noise_std != 0:
       noise = self._random_normal(
-        weight_scores.shape, stddev=noise_std, dtype=weight_scores.dtype,
+        step, weight_scores.shape, stddev=noise_std, dtype=weight_scores.dtype,
         seed=self._seed)
       weight_scores = weight_scores + noise
     return weight_scores
@@ -139,8 +138,15 @@ class RiGLPruner(pruner.Pruner):
       1. keep original value
       2. set it to 0
       3. (not implemented, but an option) use gradient direction
+
+      Args:
+        drop_regrow_init: whether to reinitialize to original value if same 
+          connection is dropped then regrown
+        grown_mask_reshaped: mask for weights of the grown connections
+        mask: the current iteration's binary mask over weights
     """
     if drop_regrow_reinit:
+      # if dropped then regrown, reinitialize to the value
       new_connections = tf.math.equal(grown_mask_reshaped, 1)
     else:
       new_connections = tf.math.logical_and(
@@ -148,24 +154,25 @@ class RiGLPruner(pruner.Pruner):
       )
     return new_connections
 
-  def _get_grow_tensor(self, weight, method):
+  def _get_grow_tensor(self, weight, method, step=0):
     if method == 'zeros':
       grow_tensor = tf.zeros_like(weight, dtype=weight.dtype)
     elif method == 'random_normal':
       divisor = 1.
       stdev = tf.math.reduce_std(weight)
-      grow_tensor = self._random_normal(weight_shape, stddev=stdev, dtype=weight.dtype, seed=self._seed) / divisor
+      print(f"random normal stdev {stdev}")
+      grow_tensor = self._random_normal(step, weight_shape, stddev=stdev, dtype=weight.dtype, seed=self._seed) / divisor
+      print(f"grow tensor {grow_tensor}")
     elif method == 'random_uniform':
       mean = tf.math.reduce_mean(tf.math.abs(weight))
       divisor = 1.
-      grow_tensor = self._random_uniform(weight.shape, minval=-mean, maxval=mean, 
+      grow_tensor = self._random_uniform(step, weight.shape, minval=-mean, maxval=mean, 
                                         dtype=weight.dtype, seed=self._seed) / divisor
-    else:
-      raise ValueError('The initialization for growing %s is not a valid option.' % method)
     return grow_tensor
 
   def _generic_top_k(self, scores, mask, n_to_modify, n_total):
-     # sort the entire array so that it can be constant for TPUs
+     # sort the entire array since TPU requires k to be constant
+     # so that its aggregation methods can be reliable
     _, sorted_idx = tf.math.top_k(
       tf.reshape(scores, [-1]), k=n_total
     )
@@ -191,7 +198,7 @@ class RiGLPruner(pruner.Pruner):
       grad: gradients obtained from the optimizer
     """
     # compute the top k magnitudes then update the current mask
-    drop_scores = self._get_drop_weights(mask, weight, noise_std=self._noise_std)
+    drop_scores = self._get_drop_weights(mask, weight, noise_std=self._noise_std, step=step)
     # need access to exactly which entries are growing to zero out optimizer slot
     grow_scores = self._get_grow_grads(mask, grad)
     n_total = tf.size(drop_scores)
@@ -205,7 +212,7 @@ class RiGLPruner(pruner.Pruner):
 
     if grow_scores is not None:
       # flatten the scores
-      grow_scores = tf.reshape(grow_scores, (-1))
+      grow_scores = tf.reshape(grow_scores, (-1,))
       # set enabled connections (ones) to min(scores) - 1, i.e. they have the lowest scores
       grow_scores_lifted = tf.where(
         tf.math.equal(dropped_mask, 1),
@@ -218,9 +225,8 @@ class RiGLPruner(pruner.Pruner):
 
       grown_mask_reshaped = tf.reshape(grown_mask, mask.shape)
       # set the values of the new connections
-      grow_tensor = self._get_grow_tensor(weight, self._grow_init_method)
+      grow_tensor = self._get_grow_tensor(weight, self._grow_init_method, step=step)
       new_connections = self._get_new_connections(self._drop_regrow_reinit, grown_mask_reshaped, mask)
-
       new_weights = tf.where(new_connections, grow_tensor, weight)
       # update weights
       weight.assign(new_weights)
@@ -260,7 +266,7 @@ class RiGLPruner(pruner.Pruner):
     Raises:
       ValueError: if block pooling function is not AVG or MAX
     """
-    if self._block_size == [1, 1]:
+    if self._block_size == (1, 1):
       return self._update_mask(step, update_fraction, mask, weights, grads)
 
     abs_weights = tf.math.abs(weights)

@@ -64,10 +64,9 @@ class RiglPruningTest(test.TestCase, parameterized.TestCase):
     self.skip_updater = schedule.ConstantSchedule(self.initial_drop_fraction, 0, 100, 2)
     self.updater = schedule.ConstantSchedule
     self.grad = _dummy_gradient
-    self.seed = [0, 1]
+    self.seed = 0
     self.noise_std = 1
     self.reinit = False
-    self.stateless = True
     self.grow_init_zeros = 'zeros'
     self.grow_init_randn = 'random normal'
     self.grow_init_randunif = 'random uniform'
@@ -82,7 +81,6 @@ class RiglPruningTest(test.TestCase, parameterized.TestCase):
       sparsity=self.target_sparsity,
       block_size=self.block_size,
       block_pooling_type=self.block_pooling_type,
-      stateless=self.stateless,
       seed=self.seed,
       noise_std=self.noise_std,
       reinit=self.reinit,
@@ -105,7 +103,6 @@ class RiglPruningTest(test.TestCase, parameterized.TestCase):
       sparsity=self.target_sparsity,
       block_size=self.block_size,
       block_pooling_type=self.block_pooling_type,
-      stateless=self.stateless,
       seed=self.seed,
       noise_std=self.noise_std,
       reinit=self.reinit
@@ -144,7 +141,6 @@ class RiglPruningTest(test.TestCase, parameterized.TestCase):
       sparsity=self.target_sparsity,
       block_size=self.block_size,
       block_pooling_type=self.block_pooling_type,
-      stateless=self.stateless,
       seed=self.seed,
       noise_std=self.noise_std,
       reinit=self.reinit
@@ -186,7 +182,6 @@ class RiglPruningTest(test.TestCase, parameterized.TestCase):
       sparsity=self.target_sparsity,
       block_size=self.block_size,
       block_pooling_type=self.block_pooling_type,
-      stateless=self.stateless,
       seed=self.seed,
       noise_std=self.noise_std,
       reinit=self.reinit
@@ -255,7 +250,10 @@ class RiglPruningTest(test.TestCase, parameterized.TestCase):
     # self.assertNotAllEqual(expected1['before'], expected1['after'])
     # self.assertNotAllEqual(expected2['before'], expected2['after'])
 
-  def testZeroInitGrownConnections(self):
+  @parameterized.parameters(
+     ('random_normal',), ('zeros',)
+  )
+  def testZeroInitGrownConnections(self, reinit_method):
     # new connections are initialized to zeros
     weight = tf.Variable(np.linspace(1.0, 100.0, 100))
     weight_dtype = weight.dtype.base_dtype
@@ -275,10 +273,9 @@ class RiglPruningTest(test.TestCase, parameterized.TestCase):
       sparsity=self.target_sparsity,
       block_size=self.block_size,
       block_pooling_type=self.block_pooling_type,
-      stateless=self.stateless,
       seed=self.seed,
       noise_std=self.noise_std,
-      reinit=self.reinit
+      reinit=reinit_method
     )
 
     optimizer = pruning_optimizer.PruningOptimizer(
@@ -287,7 +284,7 @@ class RiglPruningTest(test.TestCase, parameterized.TestCase):
 
     p.create_slots(optimizer, weight)
    
-    def weight_mask_op(pruning_vars): # TODO: to mask or not to mask
+    def weight_mask_op(pruning_vars):
       values_and_vars = []
       for mask, weight, _ in  pruning_vars:
         # weight.assign(tf.math.multiply(weight, mask))
@@ -295,7 +292,8 @@ class RiglPruningTest(test.TestCase, parameterized.TestCase):
 
     def train(optimizer, weight, sparse_vars):
       # expected = tf.zeros_like(weight, dtype=weight.dtype.base_dtype) * -1
-      expected = []
+      expected1 = []
+      expected2 = []
       # iterate until all mask updates are complete
       for i in tf.range(4 + 1):
         mask_before_update = optimizer.get_slot(weight, 'mask').read_value()
@@ -306,38 +304,79 @@ class RiglPruningTest(test.TestCase, parameterized.TestCase):
         grad.assign(tf.math.add(grad, sample_noise(i)))
         p.postprocess_weights(optimizer, weight, grad)
         mask_after_update = optimizer.get_slot(weight, 'mask').read_value()
-        # weight_after_update = weight.read_value()
         weight_after_update = weight_mask_op(sparse_vars)
         after_sparsity = tf.math.count_nonzero(mask_after_update, dtype=tf.int32) / tf.size(mask_before_update)
         # sum the values of the new connections
-        new_weights = weight_after_update[tf.math.logical_and(mask_before_update == 0, mask_after_update == 1)]
-        expected.append(tf.math.reduce_all(new_weights == 0))
+        regrown_indices = tf.math.logical_and(mask_before_update == 0, mask_after_update == 1)
+        new_weights1 = weight_after_update[regrown_indices]
+        new_weights2 = weight_after_update[regrown_indices]
+        if reinit_method == 'zeros':
+          expected1.append(tf.math.reduce_all(new_weights1 == 0))
+        elif reinit_method == 'random_normal':
+          expected2.append(tf.math.reduce_all(new_weights2 != 0))
         optimizer.iterations.assign_add(1)
       
-      return [bool(j) for j in expected]
+      return [bool(j) for j in expected1] if reinit_method == 'zeros' else [bool(j) for j in expected2]
 
     expected = train(optimizer, weight, sparse_vars)
-    self.assertTrue(np.all(expected) == True)
+    if reinit_method == 'zeros':
+      self.assertTrue(np.all(expected) == True)
+    elif reinit_method == 'random_normal':
+      self.assertTrue(np.all(expected) == False)
 
-    # weight = tf.Variable(np.linspace(1.0, 100.0, 100))
-    # weight_dtype = weight.dtype.base_dtype
-    # mask = tf.Variable(
-    #     tf.ones(weight.get_shape(), dtype=weight_dtype),
-    #     dtype=weight_dtype)
-    # grad = self.grad(weight)
-    # sparse_vars = [(mask, weight, grad)]
-    # sparsity_params = {
-    #   'pruning_schedule': self.updater(drop_ratio, 0, 4, 1)
-    # }
-    # sparsity_config = pruning_config.LowMagnitudePruningConfig(**sparsity_params) # dummy
-    # optimizer = pruning_optimizer.PruningOptimizer(
-    #   tf.keras.optimizers.SGD(learning_rate=0.01), sparsity_config)
-    # optimizer.iterations.assign(0)
+    # TODO: tf.function
+    weight = tf.Variable(np.linspace(1.0, 100.0, 100))
+    weight_dtype = weight.dtype.base_dtype
+    mask = tf.Variable(
+        tf.ones(weight.get_shape(), dtype=weight_dtype),
+        dtype=weight_dtype)
+    grad = self.grad(weight)
+    sparse_vars = [(mask, weight, grad)]
+    sparsity_params = {
+      'pruning_schedule': self.updater(drop_ratio, 0, 4, 1)
+    }
+    sparsity_config = pruning_config.LowMagnitudePruningConfig(**sparsity_params) # dummy
+    optimizer = pruning_optimizer.PruningOptimizer(
+      tf.keras.optimizers.SGD(learning_rate=0.01), sparsity_config)
+    optimizer.iterations.assign(0)
 
-    # p.create_slots(optimizer, weight)
+    p.create_slots(optimizer, weight)
     
-    # expected_tf_function = tf.function(train)(optimizer, weight, sparse_vars)
-    # self.assertTrue(np.all(expected) == True)
+    expected_tf_function = tf.function(train)(optimizer, weight, sparse_vars)
+    if reinit_method == 'zeros':
+      self.assertTrue(np.all(expected_tf_function) == True)
+    elif reinit_method == 'random_normal':
+      self.assertTrue(np.all(expected_tf_function) == False)
+
+  # @parameterized.parameters(
+  #   ('ones',), ('zero',), (None,), (0,)
+  # )
+  # def testValueErrorGetGrowTensor(self, grow_init_method):
+  #   # new connections are initialized to zeros
+  #   weight = tf.Variable(np.linspace(1.0, 100.0, 100))
+  #   weight_dtype = weight.dtype.base_dtype
+  #   mask = tf.Variable(
+  #       tf.ones(weight.get_shape(), dtype=weight_dtype),
+  #       dtype=weight_dtype)
+  #   grad = self.grad(weight)
+  #   sparse_vars = [(mask, weight, grad)]
+  #   drop_ratio = 0.5
+  #   sparsity_params = {
+  #     'pruning_schedule': self.updater(drop_ratio, 0, 4, 1)
+  #   }
+  #   sparsity_config = pruning_config.LowMagnitudePruningConfig(**sparsity_params) # dummy
+
+  #   with self.assertRaises(ValueError):
+  #     p = pruner.RiGLPruner(
+  #       update_schedule=self.updater(drop_ratio, 0, 4, 4), # update iter 1 and 3
+  #       sparsity=self.target_sparsity,
+  #       block_size=self.block_size,
+  #       block_pooling_type=self.block_pooling_type,
+  #       seed=self.seed,
+  #       noise_std=self.noise_std,
+  #       reinit=self.reinit,
+  #       grow_init=grow_init_method,
+  #     )
 
 if __name__ == "__main__":
   test.main()
