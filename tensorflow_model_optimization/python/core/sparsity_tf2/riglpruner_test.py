@@ -345,7 +345,6 @@ class RiglPruningTest(test.TestCase, parameterized.TestCase):
       return expected_iter1, expected_iter3
 
     result1, result2 = _train(optimizer, weight)
-    print(f"result1 {result1} \nresult2 {result2}")
     self.assertAllEqual(result1['sparsity'], self.target_sparsity)
     self.assertAllEqual(result2['sparsity'], self.target_sparsity)
     self.assertAllEqual(result1['sparsity'], result1['before_sparsity'])
@@ -416,7 +415,6 @@ class RiglPruningTest(test.TestCase, parameterized.TestCase):
     p.create_slots(optimizer, weight)
    
     def weight_mask_op(pruning_vars):
-      values_and_vars = []
       for mask, weight, _ in  pruning_vars:
         # weight.assign(tf.math.multiply(weight, mask))
         return tf.math.multiply(weight, mask)
