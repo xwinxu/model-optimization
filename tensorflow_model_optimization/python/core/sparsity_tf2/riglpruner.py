@@ -160,9 +160,7 @@ class RiGLPruner(pruner.Pruner):
     elif method == 'random_normal':
       divisor = 1.
       stdev = tf.math.reduce_std(weight)
-      print(f"random normal stdev {stdev}")
       grow_tensor = self._random_normal(step, weight_shape, stddev=stdev, dtype=weight.dtype, seed=self._seed) / divisor
-      print(f"grow tensor {grow_tensor}")
     elif method == 'random_uniform':
       mean = tf.math.reduce_mean(tf.math.abs(weight))
       divisor = 1.
@@ -199,10 +197,12 @@ class RiGLPruner(pruner.Pruner):
     """
     # compute the top k magnitudes then update the current mask
     drop_scores = self._get_drop_weights(mask, weight, noise_std=self._noise_std, step=step)
+    print(f"mask {mask} \nweight {weight} \ngrad {grad}")
     # need access to exactly which entries are growing to zero out optimizer slot
     grow_scores = self._get_grow_grads(mask, grad)
     n_total = tf.size(drop_scores)
-    n_ones = tf.cast(tf.reduce_sum(mask), dtype=tf.int32)
+    n_ones = tf.cast(tf.reduce_sum(mask), dtype=tf.int32) # floor not ceiling like sparsity
+    tf.print(f"n total:{n_total} n_ones {n_ones}")
     n_prune = tf.cast(
       tf.cast(n_ones, dtype=tf.float32) * update_fraction, tf.int32
     )
@@ -218,7 +218,10 @@ class RiGLPruner(pruner.Pruner):
         tf.math.equal(dropped_mask, 1),
         tf.ones_like(dropped_mask) * (tf.reduce_min(grow_scores) - 1), grow_scores
       )
+      print(f"dropped mask {dropped_mask}")
+      print(f"grow_scores_lifted {grow_scores} -> {grow_scores_lifted}")
       grown_mask = self._generic_top_k(grow_scores_lifted, mask, n_prune, n_total)
+      print(f"grown mask {grown_mask}")
       # ensure that masks are disjoint
       tf.debugging.Assert(
         tf.math.equal(tf.reduce_sum(dropped_mask * grown_mask), 0.), [dropped_mask, grown_mask])
@@ -226,8 +229,11 @@ class RiGLPruner(pruner.Pruner):
       grown_mask_reshaped = tf.reshape(grown_mask, mask.shape)
       # set the values of the new connections
       grow_tensor = self._get_grow_tensor(weight, self._grow_init_method, step=step)
-      new_connections = self._get_new_connections(self._drop_regrow_reinit, grown_mask_reshaped, mask)
-      new_weights = tf.where(new_connections, grow_tensor, weight)
+      print(f"grow_tensor {grow_tensor}")
+      new_connections_ = self._get_new_connections(self._drop_regrow_reinit, grown_mask_reshaped, mask)
+      print(f"new connections {tf.cast(new_connections_, tf.int32)}")
+      new_weights = tf.where(new_connections_, grow_tensor, weight)
+      print(f"new weights {new_weights}")
       # update weights
       weight.assign(new_weights)
       reset_momentum = True
@@ -235,9 +241,9 @@ class RiGLPruner(pruner.Pruner):
     else:
       mask_combined = tf.reshape(dropped_mask, mask.shape)
       reset_momentum = False
-      new_connections = None
+      new_connections_ = tf.zeros_like(mask, dtype=tf.bool)
 
-    return reset_momentum, mask_combined, new_connections
+    return reset_momentum, mask_combined, new_connections_
 
   
   def _maybe_update_block_mask(self, step, update_fraction, mask, weights, grads):
@@ -306,7 +312,7 @@ class RiGLPruner(pruner.Pruner):
     """
     self._validate_block(update_vars)
     should_update, update_fraction = self.update_schedule(step)
-    new_connections = None
+    new_connections = tf.zeros((), dtype=tf.bool) # we will only deal with one var each time
     reset_momentum = False
     if should_update:
       for mask, weight, grad in update_vars: # Note: techncially update_vars would only ever contain one pod of variables
