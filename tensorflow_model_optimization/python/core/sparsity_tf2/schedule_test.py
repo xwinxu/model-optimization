@@ -14,30 +14,361 @@
 # ==============================================================================
 """Tests for the key functions in pruner library."""
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
-# import g3
-
 from absl.testing import parameterized
-import numpy as np
 import tensorflow as tf
+import functools
 
-# TODO(b/139939526): move to public API.
 from tensorflow.python.keras import keras_parameterized
-from tensorflow_model_optimization.python.core.keras import compat
-from tensorflow_model_optimization.python.core.sparsity_tf2 import pruner
-from tensorflow_model_optimization.python.core.sparsity.keras import pruning_schedule
-from tensorflow_model_optimization.python.core.sparsity.keras import pruning_utils
+from tensorflow_model_optimization.python.core.sparsity_tf2 import schedule
 
 test = tf.test
 
-
 class ScheduleTest(test.TestCase, parameterized.TestCase):
+  """Test to verify custome Schedule behaviour for step parameters.
+  """
 
-  def testSchedule(self):
-    pass
+  def setUp(self):
+    super(ScheduleTest, self).setUp()
+    self.decay_steps = tf.Variable(100) # number of steps to decay for
+    self.lr_decay_fn = tf.keras.experimental.CosineDecay(0.01, self.decay_steps)
+    self.lr_optimizer = functools.partial(tf.keras.optimizers.SGD, learning_rate=self.lr_decay_fn)
+    self.optimizer = tf.keras.optimizers.SGD()
+
+  def _construct_schedule(
+      self, schedule_type, begin_step, end_step, frequency=10, k=3, 
+      optimizer=None, use_default_optimizer=True, clipnorm=None, clipvalue=None):
+    # Uses default values for sparsity. We're only testing begin_step, end_step
+    # and frequency here as a basic requirement.
+    # Other variants of the Constant schedule may have extra parameters tested.
+    # use_default_optimizer is False if we are testing optimizer function
+    initial_drop_fraction = tf.Variable(0.5) # must be a Variable unlike the orthodox sparsity float
+    if optimizer is None and use_default_optimizer:
+      kwargs = {}
+      if clipnorm:
+        kwargs['clipnorm'] = clipnorm
+      if clipvalue:
+        kwargs['clipvalue'] = clipvalue
+      optimizer = self.lr_optimizer(**kwargs)
+    if schedule_type == 'constant_rate':
+      return schedule.ConstantSchedule(
+          initial_drop_fraction, begin_step, end_step, frequency)
+    elif schedule_type == 'cosine_decay':
+      return schedule.CosineSchedule(
+          initial_drop_fraction, begin_step, end_step, frequency)
+    elif schedule_type == 'exponential_decay':
+      return schedule.ExponentialSchedule(
+          initial_drop_fraction, begin_step, end_step, frequency, k)
+    elif schedule_type == 'lr_decay':
+          return schedule.LRSchedule(
+            initial_drop_fraction, begin_step, end_step, frequency, optimizer)
+
+  @parameterized.named_parameters(
+      {
+          'testcase_name': 'ConstantSparsity',
+          'schedule_type': 'constant_rate'
+      }, {
+          'testcase_name': 'CosineSchedule',
+          'schedule_type': 'cosine_decay'
+      }, {
+          'testcase_name': 'ExponentialSchedule',
+          'schedule_type': 'exponential_decay'          
+      }, {
+          'testcase_name': 'LRSchedule',
+          'schedule_type': 'lr_decay'
+      })
+  def testBeginStepGreaterThanEqualsZero(self, schedule_type):
+    with self.assertRaises(ValueError):
+      self._construct_schedule(schedule_type, -1, 1000)
+    with self.assertRaises(ValueError):
+      self._construct_schedule(schedule_type, -5, 1000)
+
+    self._construct_schedule(schedule_type, 0, 1000)
+    self._construct_schedule(schedule_type, 1, 1000)
+    self._construct_schedule(schedule_type, 100, 1000)
+
+  @parameterized.named_parameters(
+      {
+          'testcase_name': 'ConstantSparsity',
+          'schedule_type': 'constant_rate'
+      }, {
+          'testcase_name': 'CosineSchedule',
+          'schedule_type': 'cosine_decay'
+      }, {
+          'testcase_name': 'ExponentialSchedule',
+          'schedule_type': 'exponential_decay'          
+      }, {
+          'testcase_name': 'LRSchedule',
+          'schedule_type': 'lr_decay'
+      })
+  def testEndStepGreaterThanEqualsZero(self, schedule_type):
+    with self.assertRaises(ValueError):
+      self._construct_schedule(schedule_type, 10, -5)
+
+    self._construct_schedule(schedule_type, 0, 0)
+    self._construct_schedule(schedule_type, 0, 1)
+    self._construct_schedule(schedule_type, 0, 100)
+
+  @parameterized.named_parameters(
+      {
+          'testcase_name': 'ConstantSparsity',
+          'schedule_type': 'constant_rate'
+      }, {
+          'testcase_name': 'CosineSchedule',
+          'schedule_type': 'cosine_decay'
+      }, {
+          'testcase_name': 'ExponentialSchedule',
+          'schedule_type': 'exponential_decay'          
+      }, {
+          'testcase_name': 'LRSchedule',
+          'schedule_type': 'lr_decay'
+      })
+  def testEndStepGreaterThanEqualsBeginStep(self, schedule_type):
+    with self.assertRaises(ValueError):
+      self._construct_schedule(schedule_type, 10, 5)
+
+    self._construct_schedule(schedule_type, 10, 10)
+    self._construct_schedule(schedule_type, 10, 20)
+
+  @parameterized.named_parameters(
+      {
+          'testcase_name': 'ConstantSparsity',
+          'schedule_type': 'constant_rate'
+      }, {
+          'testcase_name': 'CosineSchedule',
+          'schedule_type': 'cosine_decay'
+      }, {
+          'testcase_name': 'ExponentialSchedule',
+          'schedule_type': 'exponential_decay'          
+      }, {
+          'testcase_name': 'LRSchedule',
+          'schedule_type': 'lr_decay'
+      })
+  def testFrequencyIsPositive(self, schedule_type):
+    with self.assertRaises(ValueError):
+      self._construct_schedule(schedule_type, 10, 1000, 0)
+    with self.assertRaises(ValueError):
+      self._construct_schedule(schedule_type, 10, 1000, -1)
+    with self.assertRaises(ValueError):
+      self._construct_schedule(schedule_type, 10, 1000, -5)
+
+    self._construct_schedule(schedule_type, 10, 1000, 1)
+    self._construct_schedule(schedule_type, 10, 1000, 10)
+
+  def _validate_drop_ratio(self, schedule_construct_fn):
+    # Should not be < 0.0
+    with self.assertRaises(ValueError):
+      schedule_construct_fn(-0.001)
+    with self.assertRaises(ValueError):
+      schedule_construct_fn(-1.0)
+    with self.assertRaises(ValueError):
+      schedule_construct_fn(-10.0)
+
+    # Should not be >= 1.0
+    with self.assertRaises(ValueError):
+      schedule_construct_fn(1.0)
+    with self.assertRaises(ValueError):
+      schedule_construct_fn(10.0)
+
+    schedule_construct_fn(0.0)
+    schedule_construct_fn(0.001)
+    schedule_construct_fn(0.5)
+    schedule_construct_fn(0.99)
+  
+
+  @parameterized.named_parameters(
+      {
+          'testcase_name': 'ConstantSparsity',
+          'schedule_type': 'constant_rate'
+      }, {
+          'testcase_name': 'CosineSchedule',
+          'schedule_type': 'cosine_decay'
+      }, {
+          'testcase_name': 'ExponentialSchedule',
+          'schedule_type': 'exponential_decay'          
+      }, {
+          'testcase_name': 'LRSchedule',
+          'schedule_type': 'lr_decay'
+      })
+  def testDropFractionValueIsValid(self, schedule_type):
+    begin_steps = [0, 1, 20]
+    end_steps = [25, -1]
+    for begin_step in begin_steps:
+      for end_step in end_steps:
+        if schedule_type == 'constant_rate':
+          # pylint: disable=unnecessary-lambda
+          self._validate_drop_ratio(lambda s: schedule.ConstantSchedule(s, begin_step, end_step))
+        elif schedule_type == 'cosine_decay':
+          # pylint: disable=unnecessary-lambda
+          self._validate_drop_ratio(lambda s: schedule.CosineSchedule(s, begin_step, end_step))
+        elif schedule_type == 'exponential_decay':
+          self._validate_drop_ratio(
+              lambda s: schedule.ExponentialSchedule(s, begin_step, end_step))
+        elif schedule_type == 'lr_decay':
+          self._validate_drop_ratio(
+              lambda s: schedule.LRSchedule(s, begin_step, end_step, 10, self.optimizer)) # TODO: None=optimizer arg to LR schedule test
+
+  # Tests to ensure begin_step, end_step, frequency are used correctly.
+
+  @keras_parameterized.run_all_keras_modes
+  @parameterized.named_parameters(
+      {
+          'testcase_name': 'ConstantSparsity',
+          'schedule_type': 'constant_rate'
+      }, {
+          'testcase_name': 'CosineSchedule',
+          'schedule_type': 'cosine_decay'
+      }, {
+          'testcase_name': 'ExponentialSchedule',
+          'schedule_type': 'exponential_decay'          
+      }, {
+          'testcase_name': 'LRSchedule',
+          'schedule_type': 'lr_decay'
+      })
+  def testPrunesOnlyInBeginEndStepRange(self, schedule_type):
+    decay = self._construct_schedule(schedule_type, 100, 200, 1)
+
+    # Before begin step
+    step_90 = tf.Variable(90)
+    step_99 = tf.Variable(99)
+    # In range
+    step_100 = tf.Variable(100)
+    step_110 = tf.Variable(110)
+    step_200 = tf.Variable(200)
+    # After end step
+    step_201 = tf.Variable(201)
+    step_210 = tf.Variable(210)
+
+    self.assertFalse(self.evaluate(decay(step_90))[0])
+    self.assertFalse(self.evaluate(decay(step_99))[0])
+
+    self.assertTrue(self.evaluate(decay(step_100))[0])
+    self.assertTrue(self.evaluate(decay(step_110))[0])
+    self.assertTrue(self.evaluate(decay(step_200))[0])
+
+    self.assertFalse(self.evaluate(decay(step_201))[0])
+    self.assertFalse(self.evaluate(decay(step_210))[0])
+
+  @keras_parameterized.run_all_keras_modes
+  @parameterized.named_parameters(
+      {
+          'testcase_name': 'ConstantSparsity',
+          'schedule_type': 'constant_rate'
+      }, {
+          'testcase_name': 'CosineSchedule',
+          'schedule_type': 'cosine_decay'
+      }, {
+          'testcase_name': 'ExponentialSchedule',
+          'schedule_type': 'exponential_decay'          
+      }, {
+          'testcase_name': 'LRSchedule',
+          'schedule_type': 'lr_decay'
+      })
+  def testOnlyPrunesAtValidFrequencySteps(self, schedule_type):
+    decay = self._construct_schedule(schedule_type, 100, 200, 10)
+
+    step_100 = tf.Variable(100)
+    step_109 = tf.Variable(109)
+    step_110 = tf.Variable(110)
+    step_111 = tf.Variable(111)
+
+    self.assertFalse(self.evaluate(decay(step_109))[0])
+    self.assertFalse(self.evaluate(decay(step_111))[0])
+
+    self.assertTrue(self.evaluate(decay(step_100))[0])
+    self.assertTrue(self.evaluate(decay(step_110))[0])
+
+
+class ConstantScheduleTest(tf.test.TestCase, parameterized.TestCase):
+  def setUp(self):
+    super(ConstantScheduleTest, self).setUp()
+    self.drop_ratio = tf.Variable(0.5)
+
+  @keras_parameterized.run_all_keras_modes
+  def testPrunesForeverIfEndStepIsNegativeOne(self):
+    decay = schedule.ConstantSchedule(self.drop_ratio, 0, -1, 10)
+
+    step_10000 = tf.Variable(10000)
+    step_100000000 = tf.Variable(100000000)
+
+    self.assertTrue(self.evaluate(decay(step_10000))[0])
+    self.assertTrue(self.evaluate(decay(step_100000000))[0])
+
+    self.assertAllClose(self.drop_ratio, self.evaluate(decay(step_10000))[1])
+    self.assertAllClose(self.drop_ratio, self.evaluate(decay(step_100000000))[1])
+
+  @keras_parameterized.run_all_keras_modes
+  def testPrunesWithConstantSchedule(self):
+    decay = schedule.ConstantSchedule(self.drop_ratio, 100, 200, 10)
+
+    step_100 = tf.Variable(100)
+    step_110 = tf.Variable(110)
+    step_200 = tf.Variable(200)
+
+    self.assertAllClose(self.drop_ratio, self.evaluate(decay(step_100))[1])
+    self.assertAllClose(self.drop_ratio, self.evaluate(decay(step_110))[1])
+    self.assertAllClose(self.drop_ratio, self.evaluate(decay(step_200))[1])
+
+  def testSerializeDeserialize(self):
+    decay = schedule.ConstantSchedule(0.7, 10, 20, 10)
+
+    config = decay.get_config()
+    decay_deserialized = tf.keras.utils.deserialize_keras_object(
+        config,
+        custom_objects={
+            'ConstantSchedule': schedule.ConstantSchedule,
+            'CosineSchedule': schedule.CosineSchedule,
+            'ExponentialSchedule': schedule.ExponentialSchedule,
+            'LRSchedule': schedule.LRSchedule
+        })
+
+    self.assertEqual(decay.__dict__, decay_deserialized.__dict__)
+
+
+# TODO: to finish
+# class CosineScheduleTest(tf.test.TestCase, parameterized.TestCase):
+#   def setUp(self):
+#     super(CosineScheduleTest, self).setUp()
+#     self.drop_ratio = tf.Variable(0.5)
+
+#   @keras_parameterized.run_all_keras_modes
+#   def testPrunesForeverIfEndStepIsNegativeOne(self):
+#     decay = schedule.CosineSchedule(self.drop_ratio, 0, -1, 10)
+
+#     step_10000 = tf.Variable(10000)
+#     step_100000000 = tf.Variable(100000000)
+
+#     self.assertTrue(self.evaluate(decay(step_10000))[0])
+#     self.assertTrue(self.evaluate(decay(step_100000000))[0])
+
+#     self.assertAllClose(self.drop_ratio, self.evaluate(decay(step_10000))[1])
+#     self.assertAllClose(self.drop_ratio, self.evaluate(decay(step_100000000))[1])
+
+#   @keras_parameterized.run_all_keras_modes
+#   def testPrunesWithCosineSchedule(self):
+#     decay = schedule.CosineSchedule(self.drop_ratio, 100, 200, 10)
+
+#     step_100 = tf.Variable(100)
+#     step_110 = tf.Variable(110)
+#     step_200 = tf.Variable(200)
+
+#     self.assertAllClose(self.drop_ratio, self.evaluate(decay(step_100))[1])
+#     self.assertAllClose(self.drop_ratio, self.evaluate(decay(step_110))[1])
+#     self.assertAllClose(self.drop_ratio, self.evaluate(decay(step_200))[1])
+
+#   def testSerializeDeserialize(self):
+#     decay = schedule.CosineSchedule(0.7, 10, 20, 10)
+
+#     config = decay.get_config()
+#     decay_deserialized = tf.keras.utils.deserialize_keras_object(
+#         config,
+#         custom_objects={
+#             'ConstantSchedule': schedule.ConstantSchedule,
+#             'CosineSchedule': schedule.CosineSchedule,
+#             'ExponentialSchedule': schedule.ExponentialSchedule,
+#             'LRSchedule': schedule.LRSchedule
+#         })
+
+#     self.assertEqual(decay.__dict__, decay_deserialized.__dict__)
 
 
 if __name__ == "__main__":
