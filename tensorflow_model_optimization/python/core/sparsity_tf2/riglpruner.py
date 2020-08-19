@@ -19,8 +19,8 @@ from __future__ import division
 from __future__ import print_function
 
 import tensorflow as tf
-from absl import logging
-from functools import partial
+import absl
+import functools
 
 from tensorflow.python.ops import summary_ops_v2
 from tensorflow.python.summary import summary as summary_ops_v1
@@ -61,7 +61,7 @@ class RiGLPruner(pruner.Pruner):
         block. Must be 'AVG' or 'MAX'.
       seed: assigned by PruningConfig (base added) for multiworker consistency in random processes.
       reinit: boolean for whether to reinitialize a connection that was dropped and regrown to 
-        its original value, or to set it to 0 otherwise.
+        its original value, or to set it to the value specified by `grow_init` otherwise.
       grow_init: string ('zeros, 'random_normal', 'random_uniform', 'initial_value') way
         to initialize new connections (i.e. for a connection that was dropped and then grown, 
         this is to decide how these newly grown weights are initialized),
@@ -75,14 +75,17 @@ class RiGLPruner(pruner.Pruner):
     self._noise_std = noise_std
     self._drop_regrow_reinit = reinit
     self._grow_init_method = grow_init
-    if self._grow_init_method not in ('zeros', 'random_normal', 'random_uniform'):
-      raise ValueError('The initialization for growing %s is not a valid option.' % grow_init)
+    valid_grow_inits = ('zeros', 'random_normal', 'random_uniform')
+    try:
+      if self._grow_init_method.lower() not in valid_grow_inits:
+        raise ValueError(f'The initialization for growing {grow_init} is not a valid option ({valid_grow_inits})')
+    except:
+      raise ValueError(f"Check that the grow_init method is one of {valid_grow_inits}")
   
   def create_slots(self, optimizer, var):
     base_dtype = var.dtype
     _deterministic_initializer = sparse_utils.PermuteOnes(self.target_sparsity)
-    kwargs = {'dtype': base_dtype, 'seed': self._seed}
-    deterministic_initializer = partial(_deterministic_initializer, **kwargs)
+    deterministic_initializer = functools.partial(_deterministic_initializer, dtype=base_dtype, seed=self._seed)
     optimizer.add_slot(var, 'mask', initializer=deterministic_initializer)
 
   def _validate_block(self, update_vars):
@@ -184,6 +187,42 @@ class RiGLPruner(pruner.Pruner):
 
     return updated_mask
 
+  def _grow_connections(self, step, weight, mask, grow_scores, dropped_mask, n_update, n_total):
+    """Following the dropping of connections, grow according to the grow scores.
+
+    Args:
+      step: current optimizer step
+      weight: current state of weights being optimized
+      mask: current mask pre-updates
+      grow_scores: gradient scores (via pruner specific metrics)
+      dropped_mask: mask reflecting dropped connections
+      n_update: number of connections to grow (based on drop ratio)
+      n_total: current total number of unmasked connections available
+    Returns:
+      grow_tensor: mask of values to set for new connections that were regrown
+      grown_mask: mask of grown connections (should contain n_update many 1s)
+      new_connections: grown connections based on previously dropped this iteration
+    """
+    # flatten the scores
+    grow_scores = tf.reshape(grow_scores, (-1,))
+    # set enabled connections (ones) to min(scores) - 1, i.e. they have the lowest scores
+    grow_scores_lifted = tf.where(
+      tf.math.equal(dropped_mask, 1),
+      tf.ones_like(dropped_mask) * (tf.reduce_min(grow_scores) - 1), grow_scores
+    )
+    grown_mask = self._generic_top_k(grow_scores_lifted, mask, n_update, n_total)
+    # ensure that masks are disjoint
+    tf.debugging.Assert(
+      tf.math.equal(tf.reduce_sum(dropped_mask * grown_mask), 0.), [dropped_mask, grown_mask])
+
+    grown_mask_reshaped = tf.reshape(grown_mask, mask.shape)
+    # set the values of the new connections
+    grow_tensor = self._get_grow_tensor(weight, self._grow_init_method, step=step)
+    new_connections = self._get_new_connections(self._drop_regrow_reinit, grown_mask_reshaped, mask)
+
+    return grow_tensor, grown_mask, new_connections
+
+
   def _update_mask(self, step, update_fraction, mask, weight, grad):
     """Called by _maybe_update_block_mask.
     Updates mask based on weight and grad information.
@@ -208,24 +247,10 @@ class RiGLPruner(pruner.Pruner):
 
     dropped_mask = self._generic_top_k(drop_scores, mask, n_keep, n_total)
 
-    if grow_scores is not None:
-      # flatten the scores
-      grow_scores = tf.reshape(grow_scores, (-1,))
-      # set enabled connections (ones) to min(scores) - 1, i.e. they have the lowest scores
-      grow_scores_lifted = tf.where(
-        tf.math.equal(dropped_mask, 1),
-        tf.ones_like(dropped_mask) * (tf.reduce_min(grow_scores) - 1), grow_scores
-      )
-      grown_mask = self._generic_top_k(grow_scores_lifted, mask, n_prune, n_total)
-      # ensure that masks are disjoint
-      tf.debugging.Assert(
-        tf.math.equal(tf.reduce_sum(dropped_mask * grown_mask), 0.), [dropped_mask, grown_mask])
-
-      grown_mask_reshaped = tf.reshape(grown_mask, mask.shape)
-      # set the values of the new connections
-      grow_tensor = self._get_grow_tensor(weight, self._grow_init_method, step=step)
-      new_connections_ = self._get_new_connections(self._drop_regrow_reinit, grown_mask_reshaped, mask)
-      new_weights = tf.where(new_connections_, grow_tensor, weight)
+    if grow_scores is not None: # case where there is no growing
+      grow_tensor, grown_mask, new_connections = self._grow_connections(
+                                    step, weight, mask, grow_scores, dropped_mask, n_prune, n_total)
+      new_weights = tf.where(new_connections, grow_tensor, weight)
       # update weights
       weight.assign(new_weights)
       reset_momentum = True
@@ -233,9 +258,9 @@ class RiGLPruner(pruner.Pruner):
     else:
       mask_combined = tf.reshape(dropped_mask, mask.shape)
       reset_momentum = False
-      new_connections_ = tf.zeros_like(mask, dtype=tf.bool)
+      new_connections = tf.zeros_like(mask, dtype=tf.bool)
 
-    return reset_momentum, mask_combined, new_connections_
+    return reset_momentum, mask_combined, new_connections
 
   
   def _maybe_update_block_mask(self, step, update_fraction, mask, weights, grads):
