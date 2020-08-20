@@ -155,7 +155,7 @@ class RiglPruningTest(test.TestCase, parameterized.TestCase):
     self.assertAllEqual(before_sparsity, self.target_sparsity)
 
     next_step = optimizer.iterations.assign_add(1)
-    reset_momentum, new_connections = p.update_masks(sparse_vars, next_step)
+    reset_momentum, new_connections = p.update_masks(sparse_vars, next_step, optimizer)
     self.assertAllEqual(reset_momentum, False)
     expected_new_connections = tf.zeros((), dtype=tf.bool)
     self.assertAllEqual(new_connections, expected_new_connections)
@@ -197,12 +197,13 @@ class RiglPruningTest(test.TestCase, parameterized.TestCase):
       mask_before_update = optimizer.get_slot(weight, 'mask').read_value()
       before_sparsity = np.count_nonzero(mask_before_update) / tf.size(mask_before_update)
       step = optimizer.iterations
-      p.update_masks(sparse_vars, step)
+      p.update_masks(sparse_vars, step, optimizer)
       mask_after_update = optimizer.get_slot(weight, 'mask').read_value()
       after_sparsity = np.count_nonzero(mask_after_update) / tf.size(mask_before_update)
       self.assertAllEqual(mask_before_update, mask_after_update)
       self.assertAllEqual(before_sparsity, after_sparsity)
       self.assertAllEqual(self.target_sparsity, after_sparsity)
+      optimizer.iterations.assign_add(1)
 
   @parameterized.parameters(
     (0.9,),  (0.7,), (0.5,), (0.3,), (0.1,)

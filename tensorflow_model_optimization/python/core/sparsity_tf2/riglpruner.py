@@ -159,11 +159,11 @@ class RiGLPruner(pruner.Pruner):
       )
     return new_connections
 
-  def _get_grow_tensor(self, weight, method, step=0):
+  def _get_grow_tensor(self, weight, method, optimizer, step=0):
     if method == 'zeros':
       grow_tensor = tf.zeros_like(weight, dtype=weight.dtype)
     elif method == 'random_normal':
-      divisor = 1.
+      divisor = 1. # TODO: support different divisors
       stdev = tf.math.reduce_std(weight)
       grow_tensor = self._random_normal(step, weight.get_shape(), stddev=stdev, dtype=weight.dtype, seed=self._seed) / divisor
     elif method == 'random_uniform':
@@ -172,8 +172,10 @@ class RiGLPruner(pruner.Pruner):
       grow_tensor = self._random_uniform(step, weight.get_shape(), minval=-mean, maxval=mean, 
                                         dtype=weight.dtype, seed=self._seed) / divisor
     elif method == 'initial_value':
-      # TODO(xwinxu): incorporate the initial values from slot variables
-      pass
+      initial_values = optimizer.get_slot(weight, 'initial_value')
+      divisor = 1.
+      flat_grow_tensor = tf.random.shuffle(tf.reshape(initial_values, (-1,)))
+      grow_tensor = tf.reshape(flat_grow_tensor, weight.get_shape()) / divisor
     return grow_tensor
 
   def _generic_top_k(self, scores, mask, n_to_modify, n_total):
@@ -192,12 +194,13 @@ class RiGLPruner(pruner.Pruner):
 
     return updated_mask
 
-  def _grow_connections(self, step, weight, mask, grow_scores, dropped_mask, n_update, n_total):
+  def _grow_connections(self, step, optimizer, weight, mask, grow_scores, dropped_mask, n_update, n_total):
     """Following the dropping of connections, grow according to the grow scores.
 
     Args:
       step: current optimizer step
       weight: current state of weights being optimized
+      optimizer: shared PruningOptimizer
       mask: current mask pre-updates
       grow_scores: gradient scores (via pruner specific metrics)
       dropped_mask: mask reflecting dropped connections
@@ -222,18 +225,19 @@ class RiGLPruner(pruner.Pruner):
 
     grown_mask_reshaped = tf.reshape(grown_mask, mask.shape)
     # set the values of the new connections
-    grow_tensor = self._get_grow_tensor(weight, self._grow_init_method, step=step)
+    grow_tensor = self._get_grow_tensor(weight, self._grow_init_method, optimizer, step=step)
     new_connections = self._get_new_connections(self._drop_regrow_reinit, grown_mask_reshaped, mask)
 
     return grow_tensor, grown_mask, new_connections
 
 
-  def _update_mask(self, step, update_fraction, mask, weight, grad):
+  def _update_mask(self, step, optimizer, update_fraction, mask, weight, grad):
     """Called by _maybe_update_block_mask.
     Updates mask based on weight and grad information.
 
     Args:
       step: current iteration from optimizer
+      optimizer: shared PruningOptimizer
       update_fraction: the fraction of existing connections to update
       mask: the mask to update
       weight: trainable variable representing weights
@@ -253,25 +257,25 @@ class RiGLPruner(pruner.Pruner):
     dropped_mask = self._generic_top_k(drop_scores, mask, n_keep, n_total)
 
     # TODO(xwinxu): address case where there is no growing (just pruning), 
-    # i.e. if grow_scores is not None: ...
+    # i.e. if grow_scores is not None:
+    #      else:
+    #        mask_combined = tf.reshape(dropped_mask, mask.shape)
+    #        reset_momentum = False
+    #        new_connections = tf.zeros_like(mask, dtype=tf.bool)
     # some possible APIs to consider are: 1) `grow_score_fn` passed into the
     # constructor, or 2) `grow_enabled` bool flag to aid with customizable grow scores.
     grow_tensor, grown_mask, new_connections = self._grow_connections(
-                                  step, weight, mask, grow_scores, dropped_mask, n_prune, n_total)
+                                  step, optimizer, weight, mask, grow_scores, dropped_mask, n_prune, n_total)
     new_weights = tf.where(new_connections, grow_tensor, weight)
     # update weights
     weight.assign(new_weights)
     reset_momentum = True
     mask_combined = tf.reshape(dropped_mask + grown_mask, mask.shape)
-    # else:
-    #   mask_combined = tf.reshape(dropped_mask, mask.shape)
-    #   reset_momentum = False
-    #   new_connections = tf.zeros_like(mask, dtype=tf.bool)
 
     return reset_momentum, mask_combined, new_connections
 
   
-  def _maybe_update_block_mask(self, step, update_fraction, mask, weights, grads):
+  def _maybe_update_block_mask(self, step, optimizer, update_fraction, mask, weights, grads):
     """Performs block-granular masking of the weights.
 
     Block pruning occurs only if the block_height or block_width is > 1 and
@@ -279,6 +283,7 @@ class RiGLPruner(pruner.Pruner):
     pruning occurs.
     Args:
       step: the step tensor at which to update the mask.
+      optimizer: shared PruningOptimizer
       weights: The weight tensor that needs to be masked.
       update_fraction: the current fraction of connections 
         of which to potentially update (i.e. drop / grow)
@@ -298,7 +303,7 @@ class RiGLPruner(pruner.Pruner):
       ValueError: if block pooling function is not AVG or MAX
     """
     if self._block_size == (1, 1):
-      return self._update_mask(step, update_fraction, mask, weights, grads)
+      return self._update_mask(step, optimizer, update_fraction, mask, weights, grads)
 
     abs_weights = tf.math.abs(weights)
     pooled_weights = pruning_utils.factorized_pool(
@@ -312,7 +317,7 @@ class RiGLPruner(pruner.Pruner):
       pooled_weights = tf.squeeze(pooled_weights)
 
     # TODO(xwinxu): confirm how the mask works for pooled_weights
-    reset_momentum, new_mask, new_connections = self._update_mask(step, update_fraction, mask, pooled_weights)
+    reset_momentum, new_mask, new_connections = self._update_mask(step, optimizer, update_fraction, mask, pooled_weights)
 
     updated_mask = pruning_utils.expand_tensor(new_mask, self._block_size)
     sliced_mask = tf.slice(
@@ -322,12 +327,13 @@ class RiGLPruner(pruner.Pruner):
     return reset_momentum, tf.reshape(sliced_mask, tf.shape(weights)), new_connections
 
 
-  def update_masks(self, update_vars, step):
+  def update_masks(self, update_vars, step, optimizer):
     """Updates masks as per the update schedule.
 
     Args: 
       update_vars: A list of (mask, weight, gradient) tuples
       step: the current iteration of the optimizer
+      optimizer: shared PruningOptimizer
 
     Returns:
       reset_momentum: boolean indicating whether or not connections 
@@ -341,7 +347,7 @@ class RiGLPruner(pruner.Pruner):
     reset_momentum = False
     if should_update:
       for mask, weight, grad in update_vars: # Note: techncially update_vars would only ever contain one pod of variables
-        reset_momentum, new_mask, new_connections = self._maybe_update_block_mask(step, update_fraction, mask, weight, grad)
+        reset_momentum, new_mask, new_connections = self._maybe_update_block_mask(step, optimizer, update_fraction, mask, weight, grad)
         mask.assign(new_mask)
 
     return reset_momentum, new_connections
@@ -390,7 +396,7 @@ class RiGLPruner(pruner.Pruner):
     """
     mask = optimizer.get_slot(var, 'mask')
     # calculate new connections and assign mask
-    reset_momentum, new_connections = self.update_masks([(mask, var, grad)], step=optimizer.iterations)
+    reset_momentum, new_connections = self.update_masks([(mask, var, grad)], step=optimizer.iterations, optimizer=optimizer)
     # assign weights based on new sparse binary mask
     self._apply_mask(var, mask)
     # ensure there is not momentum values for new connections
