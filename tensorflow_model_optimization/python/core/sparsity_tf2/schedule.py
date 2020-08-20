@@ -23,7 +23,7 @@ class Schedule(object):
   """Specifies whether or not to update state at a specified training step.
 
   Schedule is a generic class that can control pruning and annealing during
-  training by notifying each layer of weights whether or not it should be
+  training by notifying each layer of weights whether or not it should be 
   pruned (and at a sparsity percentage) or by updating the fraction of sparse
   mask features to update at the specified training iteration.
   """
@@ -102,7 +102,7 @@ class Schedule(object):
       step: Current step in graph execution.
 
     Returns:
-      update percentage (%) that should be applied to the object
+      update percentage (%) that should be applied to the object 
       controlled by schedule for the step.
     """
     raise NotImplementedError(
@@ -179,7 +179,7 @@ class CosineSchedule(Schedule):
                frequency=100):
     """Initializes an annealing schedule for the drop fraction in a
     mask update function that follows a cosine function.
-
+    
     Args:
       begin_step: the step to start updating the drop fraction.
       initial_drop_fraction: the fraction to begin with dropping
@@ -336,4 +336,3 @@ class LRSchedule(Schedule):
                                     self.frequency)
     return (should_prune_in_step,
         self._get_update_percentage(self.alpha, should_prune_in_step, step))
-
