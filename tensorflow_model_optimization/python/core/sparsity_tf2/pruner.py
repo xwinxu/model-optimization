@@ -62,11 +62,11 @@ class LowMagnitudePruner(Pruner):
     """
     super(LowMagnitudePruner, self).__init__()
     self._pruning_schedule = pruning_schedule
-    self._block_size = list(block_size)
+    self._block_size = tuple(block_size)
     self._block_pooling_type = block_pooling_type
 
   def _validate_block(self, pruning_vars):
-    if self._block_size != [1, 1]:
+    if self._block_size != (1, 1):
       for weight, _, _ in pruning_vars:
         if weight.get_shape().ndims != 2:
           raise ValueError('Block Sparsity can only be used for layers which '
@@ -129,7 +129,7 @@ class LowMagnitudePruner(Pruner):
     Raises:
       ValueError: if block pooling function is not AVG or MAX
     """
-    if self._block_size == [1, 1]:
+    if self._block_size == (1, 1):
       return self._update_mask(step, weights)
 
     abs_weights = tf.math.abs(weights)
