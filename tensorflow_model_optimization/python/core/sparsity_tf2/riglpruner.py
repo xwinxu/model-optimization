@@ -66,7 +66,7 @@ class RiGLPruner(pruner.Pruner):
     super(RiGLPruner, self).__init__()
     self.target_sparsity = sparsity
     self.update_schedule = update_schedule
-    self._block_size = block_size
+    self._block_size = tuple(block_size)
     self.block_pooling_type = block_pooling_type
     self._seed = seed
     self._noise_std = noise_std
