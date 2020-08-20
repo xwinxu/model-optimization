@@ -87,7 +87,8 @@ class RiGLPruner(pruner.Pruner):
     _deterministic_initializer = sparse_utils.PermuteOnes(self.target_sparsity)
     deterministic_initializer = functools.partial(_deterministic_initializer, dtype=base_dtype, seed=self._seed)
     optimizer.add_slot(var, 'mask', initializer=deterministic_initializer)
-    optimizer.add_slot(var, 'initial_value', initializer=var.read_value())
+    if self._drop_regrow_reinit: 
+      optimizer.add_slot(var, 'initial_value', initializer=var.read_value())
 
   def _validate_block(self, update_vars):
     if self._block_size != (1, 1):
