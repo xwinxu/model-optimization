@@ -223,25 +223,25 @@ class ScheduleTest(test.TestCase, parameterized.TestCase):
     decay = self._construct_schedule(schedule_type, 100, 200, 1)
 
     # Before begin step
-    step_90 = tf.Variable(90)
-    step_99 = tf.Variable(99)
+    step_90 = 90
+    step_99 = 99
     # In range
-    step_100 = tf.Variable(100)
-    step_110 = tf.Variable(110)
-    step_200 = tf.Variable(200)
+    step_100 = 100
+    step_110 = 110
+    step_200 = 200
     # After end step
-    step_201 = tf.Variable(201)
-    step_210 = tf.Variable(210)
+    step_201 = 201
+    step_210 = 210
 
-    self.assertFalse(self.evaluate(decay(step_90))[0])
-    self.assertFalse(self.evaluate(decay(step_99))[0])
+    self.assertFalse(decay(step_90)[0])
+    self.assertFalse(decay(step_99)[0])
 
-    self.assertTrue(self.evaluate(decay(step_100))[0])
-    self.assertTrue(self.evaluate(decay(step_110))[0])
-    self.assertTrue(self.evaluate(decay(step_200))[0])
+    self.assertTrue(decay(step_100)[0])
+    self.assertTrue(decay(step_110)[0])
+    self.assertTrue(decay(step_200)[0])
 
-    self.assertFalse(self.evaluate(decay(step_201))[0])
-    self.assertFalse(self.evaluate(decay(step_210))[0])
+    self.assertFalse(decay(step_201)[0])
+    self.assertFalse(decay(step_210)[0])
 
   @keras_parameterized.run_all_keras_modes
   @parameterized.named_parameters(
@@ -261,47 +261,47 @@ class ScheduleTest(test.TestCase, parameterized.TestCase):
   def testOnlyPrunesAtValidFrequencySteps(self, schedule_type):
     decay = self._construct_schedule(schedule_type, 100, 200, 10)
 
-    step_100 = tf.Variable(100)
-    step_109 = tf.Variable(109)
-    step_110 = tf.Variable(110)
-    step_111 = tf.Variable(111)
+    step_100 = 100
+    step_109 = 109
+    step_110 = 110
+    step_111 = 111
 
-    self.assertFalse(self.evaluate(decay(step_109))[0])
-    self.assertFalse(self.evaluate(decay(step_111))[0])
+    self.assertFalse(decay(step_109)[0])
+    self.assertFalse(decay(step_111)[0])
 
-    self.assertTrue(self.evaluate(decay(step_100))[0])
-    self.assertTrue(self.evaluate(decay(step_110))[0])
+    self.assertTrue(decay(step_100)[0])
+    self.assertTrue(decay(step_110)[0])
 
 
 class ConstantScheduleTest(tf.test.TestCase, parameterized.TestCase):
   def setUp(self):
     super(ConstantScheduleTest, self).setUp()
-    self.drop_ratio = tf.Variable(0.5)
+    self.drop_ratio = 0.5
 
   @keras_parameterized.run_all_keras_modes
   def testPrunesForeverIfEndStepIsNegativeOne(self):
     decay = schedule.ConstantSchedule(self.drop_ratio, 0, -1, 10)
 
-    step_10000 = tf.Variable(10000)
-    step_100000000 = tf.Variable(100000000)
+    step_10000 = 10000
+    step_100000000 = 100000000
 
-    self.assertTrue(self.evaluate(decay(step_10000))[0])
-    self.assertTrue(self.evaluate(decay(step_100000000))[0])
+    self.assertTrue(decay(step_10000)[0])
+    self.assertTrue(decay(step_100000000)[0])
 
-    self.assertAllClose(self.drop_ratio, self.evaluate(decay(step_10000))[1])
-    self.assertAllClose(self.drop_ratio, self.evaluate(decay(step_100000000))[1])
+    self.assertAllClose(self.drop_ratio, decay(step_10000)[1])
+    self.assertAllClose(self.drop_ratio, decay(step_100000000)[1])
 
   @keras_parameterized.run_all_keras_modes
   def testPrunesWithConstantSchedule(self):
     decay = schedule.ConstantSchedule(self.drop_ratio, 100, 200, 10)
 
-    step_100 = tf.Variable(100)
-    step_110 = tf.Variable(110)
-    step_200 = tf.Variable(200)
+    step_100 = 100
+    step_110 = 110
+    step_200 = 200
 
-    self.assertAllClose(self.drop_ratio, self.evaluate(decay(step_100))[1])
-    self.assertAllClose(self.drop_ratio, self.evaluate(decay(step_110))[1])
-    self.assertAllClose(self.drop_ratio, self.evaluate(decay(step_200))[1])
+    self.assertAllClose(self.drop_ratio, decay(step_100)[1])
+    self.assertAllClose(self.drop_ratio, decay(step_110)[1])
+    self.assertAllClose(self.drop_ratio, decay(step_200)[1])
 
   def testSerializeDeserialize(self):
     decay = schedule.ConstantSchedule(0.7, 10, 20, 10)
@@ -319,36 +319,35 @@ class ConstantScheduleTest(tf.test.TestCase, parameterized.TestCase):
     self.assertEqual(decay.__dict__, decay_deserialized.__dict__)
 
 
-# TODO: to finish
 # class CosineScheduleTest(tf.test.TestCase, parameterized.TestCase):
 #   def setUp(self):
 #     super(CosineScheduleTest, self).setUp()
-#     self.drop_ratio = tf.Variable(0.5)
+#     self.drop_ratio = 0.5
 
 #   @keras_parameterized.run_all_keras_modes
 #   def testPrunesForeverIfEndStepIsNegativeOne(self):
 #     decay = schedule.CosineSchedule(self.drop_ratio, 0, -1, 10)
 
-#     step_10000 = tf.Variable(10000)
-#     step_100000000 = tf.Variable(100000000)
+#     step_10000 = 10000
+#     step_100000000 = 100000000
 
-#     self.assertTrue(self.evaluate(decay(step_10000))[0])
-#     self.assertTrue(self.evaluate(decay(step_100000000))[0])
+#     self.assertTrue(decay(step_10000)[0])
+#     self.assertTrue(decay(step_100000000)[0])
 
-#     self.assertAllClose(self.drop_ratio, self.evaluate(decay(step_10000))[1])
-#     self.assertAllClose(self.drop_ratio, self.evaluate(decay(step_100000000))[1])
+#     self.assertAllClose(self.drop_ratio, decay(step_10000)[1])
+#     self.assertAllClose(self.drop_ratio, decay(step_100000000)[1])
 
 #   @keras_parameterized.run_all_keras_modes
 #   def testPrunesWithCosineSchedule(self):
 #     decay = schedule.CosineSchedule(self.drop_ratio, 100, 200, 10)
 
-#     step_100 = tf.Variable(100)
-#     step_110 = tf.Variable(110)
-#     step_200 = tf.Variable(200)
+#     step_100 = 100
+#     step_110 = 110
+#     step_200 = 200
 
-#     self.assertAllClose(self.drop_ratio, self.evaluate(decay(step_100))[1])
-#     self.assertAllClose(self.drop_ratio, self.evaluate(decay(step_110))[1])
-#     self.assertAllClose(self.drop_ratio, self.evaluate(decay(step_200))[1])
+#     self.assertAllClose(self.drop_ratio, decay(step_100)[1])
+#     self.assertAllClose(self.drop_ratio, decay(step_110)[1])
+#     self.assertAllClose(self.drop_ratio, decay(step_200)[1])
 
 #   def testSerializeDeserialize(self):
 #     decay = schedule.CosineSchedule(0.7, 10, 20, 10)

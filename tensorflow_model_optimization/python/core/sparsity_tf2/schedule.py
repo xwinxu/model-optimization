@@ -241,6 +241,8 @@ class ExponentialSchedule(Schedule):
     self.alpha = initial_drop_fraction
     self.begin_step = begin_step
     self.end_step = end_step
+    # self.begin_step = tf.cast(begin_step, tf.float32)
+    # self.end_step = tf.cast(end_step, tf.float32)
     self.frequency = frequency
     self.exponent = k
 
@@ -263,10 +265,10 @@ class ExponentialSchedule(Schedule):
     # alpha is the initial drop fraction.
     annealed_alpha = tf.zeros_like(alpha)
     if should_prune_in_step:
-      div_dtype = alpha.dtype
+      # div_dtype = alpha.dtype
       exp = tf.math.divide(
-        tf.cast(step - self.begin_step, div_dtype),
-        tf.cast(self.end_step - self.begin_step, div_dtype),
+        tf.cast(step - self.begin_step, tf.float32),
+        tf.cast(self.end_step - self.begin_step, tf.float32),
       )
       annealed_alpha = tf.math.multiply(alpha, tf.math.pow(1 - exp, self.exponent),
                                         name='%s_drop_fraction' % self.exponent)
