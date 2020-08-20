@@ -582,6 +582,7 @@ class RiglPruningTest(test.TestCase, parameterized.TestCase):
       self.assertEqual(after_stdev, expected_stdev)
       self.assertEqual(after_mean, expected_mean)
     elif reinit_method.lower() in ('initial_value'):
+      # TODO(xwinxu): check that slots are not created in other cases
       updated_mask = optimizer.get_slot(weight, 'mask').read_value()
       self.assertAllClose(tf.math.reduce_sum(weight_after).numpy(), tf.math.reduce_sum(expected_dist * updated_mask).numpy(), rtol=7.5e-2)
 
