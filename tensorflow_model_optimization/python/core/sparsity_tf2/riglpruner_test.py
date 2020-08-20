@@ -64,7 +64,6 @@ class RiglPruningTest(test.TestCase, parameterized.TestCase):
     self.grad = _dummy_gradient
     self.seed = 0
     self.noise_std = 1
-    self.reinit = False
     self.grow_init_zeros = 'zeros'
     self.grow_init_randn = 'random normal'
     self.grow_init_randunif = 'random uniform'
@@ -81,7 +80,6 @@ class RiglPruningTest(test.TestCase, parameterized.TestCase):
       block_pooling_type=self.block_pooling_type,
       seed=self.seed,
       noise_std=self.noise_std,
-      reinit=self.reinit,
       grow_init=self.grow_init_zeros
     )
 
@@ -104,7 +102,6 @@ class RiglPruningTest(test.TestCase, parameterized.TestCase):
       block_pooling_type=self.block_pooling_type,
       seed=self.seed,
       noise_std=self.noise_std,
-      reinit=self.reinit
     )
 
     optimizer = tf.keras.optimizers.SGD(learning_rate=0.01)
@@ -143,7 +140,6 @@ class RiglPruningTest(test.TestCase, parameterized.TestCase):
       block_pooling_type=self.block_pooling_type,
       seed=self.seed,
       noise_std=self.noise_std,
-      reinit=self.reinit
     )
 
     optimizer = tf.keras.optimizers.SGD(learning_rate=0.01)
@@ -186,7 +182,6 @@ class RiglPruningTest(test.TestCase, parameterized.TestCase):
       block_pooling_type=self.block_pooling_type,
       seed=self.seed,
       noise_std=self.noise_std,
-      reinit=self.reinit
     )
 
     optimizer = tf.keras.optimizers.SGD(learning_rate=0.01)
@@ -227,7 +222,6 @@ class RiglPruningTest(test.TestCase, parameterized.TestCase):
       block_pooling_type=self.block_pooling_type,
       seed=self.seed,
       noise_std=self.noise_std,
-      reinit=self.reinit
     )
 
     _optimizer = tf.keras.optimizers.SGD(learning_rate=0.01)
@@ -272,7 +266,6 @@ class RiglPruningTest(test.TestCase, parameterized.TestCase):
       block_pooling_type=self.block_pooling_type,
       seed=self.seed,
       noise_std=self.noise_std,
-      reinit=self.reinit
     )
 
     _optimizer = tf.keras.optimizers.SGD(learning_rate=0.01)
@@ -363,7 +356,6 @@ class RiglPruningTest(test.TestCase, parameterized.TestCase):
       block_pooling_type=self.block_pooling_type,
       seed=self.seed,
       noise_std=self.noise_std,
-      reinit=self.reinit
     )
 
     _optimizer = tf.keras.optimizers.SGD(learning_rate=0.01)
@@ -446,7 +438,7 @@ class RiglPruningTest(test.TestCase, parameterized.TestCase):
       block_pooling_type=self.block_pooling_type,
       seed=self.seed,
       noise_std=self.noise_std,
-      reinit=reinit_method
+      grow_init=reinit_method
     )
 
     optimizer = pruning_optimizer.PruningOptimizer(
@@ -494,7 +486,7 @@ class RiglPruningTest(test.TestCase, parameterized.TestCase):
     if reinit_method in ('zeros', 'ZEROS'):
       self.assertTrue(bool(all_true) == True)
     elif reinit_method in ('random_normal', 'RANDOM_NORMAL', 'random_uniform', 'RANDOM_UNIFORM'):
-      self.assertTrue(bool(all_true) == False)
+      self.assertTrue(bool(all_true) == True)
 
 
   @parameterized.parameters(
@@ -524,7 +516,6 @@ class RiglPruningTest(test.TestCase, parameterized.TestCase):
       block_pooling_type=self.block_pooling_type,
       seed=self.seed,
       noise_std=self.noise_std,
-      reinit=self.reinit,
       grow_init=reinit_method
     )
 
@@ -599,7 +590,6 @@ class RiglPruningTest(test.TestCase, parameterized.TestCase):
         block_pooling_type=self.block_pooling_type,
         seed=self.seed,
         noise_std=self.noise_std,
-        reinit=self.reinit,
         grow_init=grow_init_method,
       )
 

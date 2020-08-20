@@ -42,7 +42,6 @@ class RiGLPruner(pruner.Pruner):
       block_pooling_type='AVG',
       seed=0,
       noise_std=0,
-      reinit=False,
       grow_init='zeros'
     ):
     """The logic for magnitude-based RiGL trained weight tensors as presented
@@ -60,8 +59,6 @@ class RiGLPruner(pruner.Pruner):
       block_pooling_type: (optional) The function to use to pool weights in the
         block. Must be 'AVG' or 'MAX'.
       seed: assigned by PruningConfig (base added) for multiworker consistency in random processes.
-      reinit: boolean for whether to reinitialize a connection that was dropped and regrown to 
-        its original value, or to set it to the value specified by `grow_init` otherwise.
       grow_init: string ('zeros, 'random_normal', 'random_uniform', 'initial_value') way
         to initialize new connections (i.e. for a connection that was dropped and then grown, 
         this is to decide how these newly grown weights are initialized),
@@ -73,7 +70,6 @@ class RiGLPruner(pruner.Pruner):
     self.block_pooling_type = block_pooling_type
     self._seed = seed
     self._noise_std = noise_std
-    self._drop_regrow_reinit = reinit # TODO(xwinxu): re-assign to initial_value
     valid_grow_inits = ('zeros', 'random_normal', 'random_uniform', 'initial_value')
     try:
       self._grow_init_method = grow_init.lower()
@@ -81,6 +77,9 @@ class RiGLPruner(pruner.Pruner):
       raise ValueError(f"Check that the grow_init method is type str and one of {valid_grow_inits}")
     if self._grow_init_method not in valid_grow_inits:
       raise ValueError(f'The initialization for growing {grow_init} is not a valid option ({valid_grow_inits})')
+    # boolean for whether to reinitialize a connection that was dropped and regrown to 
+    # its original value, or to set it to the value specified by `grow_init` otherwise.
+    self._drop_regrow_reinit = True if self._grow_init_method == 'initial_value' else False 
     
   
   def create_slots(self, optimizer, var):
