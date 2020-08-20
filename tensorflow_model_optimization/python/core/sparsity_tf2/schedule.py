@@ -286,34 +286,31 @@ class LRSchedule(Schedule):
                begin_step,
                end_step=-1,
                frequency=100,
-               optimizer=None):
+               lr_schedule=None):
     """Initializes an annealing schedule for the drop fraction in a
     mask update function that follows the learning rate.
     Args:
-      optimizer: the optimizer being used at training time
       begin_step: the step to start updating the drop fraction.
       initial_drop_fraction: the fraction to begin with dropping
       end_step: iteration to stop updating
       frequency: the number of steps after which to update
+      lr_schedule: the schedule followed by the optimizer at train time
     """
     self.begin_step = begin_step
     self.end_step = end_step
     self.alpha = initial_drop_fraction
     self.frequency = frequency
-    self._optimizer = optimizer
-    if not isinstance(self._optimizer, tf.keras.optimizers.Optimizer):
-      raise ValueError(f"optimizer={optimizer} is not a valid Keras Optimizer. See tf.keras.optimizers.")
+    self._lr_schedule = lr_schedule
+    if not isinstance(self._lr_schedule, tf.keras.optimizers.schedules.LearningRateSchedule):
+      raise ValueError(f"lr_schedule={lr_schedule} is not a valid Keras lr_schedule. See tf.keras.optimizer.schedules.")
     # essentially optimizer.lr(step=0)
-    self.initial_lr = self._get_lr(0)
+    self.initial_lr = self._lr_schedule.initial_learning_rate
 
     self._validate_step(self.begin_step, self.end_step, self.frequency, True)
     self._validate_ratio(initial_drop_fraction, 'drop_fraction')
 
   def _get_lr(self, step):
-    if isinstance(self._optimizer.lr, tf.Variable):
-      return self._optimizer.lr
-    else:
-      return self._optimizer.lr(step)
+    return self._lr_schedule(step)
 
   def get_config(self):
     return {
@@ -323,12 +320,12 @@ class LRSchedule(Schedule):
             'begin_step': self.begin_step,
             'end_step': self.end_step,
             'frequency': self.frequency,
-            'optimizer': self._optimizer
+            'lr_schedule': self._lr_schedule
         }
     }
 
   def _get_update_percentage(self, alpha, should_prune_in_step, step):
-    current_lr = self._optimizer.lr(step)
+    current_lr = self._get_lr(step)
     annealed_alpha = (self.alpha / self.initial_lr) * current_lr
     return annealed_alpha
 

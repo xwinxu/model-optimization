@@ -31,24 +31,19 @@ class ScheduleTest(test.TestCase, parameterized.TestCase):
     super(ScheduleTest, self).setUp()
     self.decay_steps = tf.Variable(100) # number of steps to decay for
     self.lr_decay_fn = tf.keras.experimental.CosineDecay(0.01, self.decay_steps)
-    self.lr_optimizer = functools.partial(tf.keras.optimizers.SGD, learning_rate=self.lr_decay_fn)
+    self.lr_schedule = functools.partial(tf.keras.optimizers.SGD, learning_rate=self.lr_decay_fn)
     self.optimizer = tf.keras.optimizers.SGD()
 
   def _construct_schedule(
       self, schedule_type, begin_step, end_step, frequency=10, k=3, 
-      optimizer=None, use_default_optimizer=True, clipnorm=None, clipvalue=None):
+      lr_schedule=None, use_default_lr=True, clipnorm=None, clipvalue=None):
     # Uses default values for sparsity. We're only testing begin_step, end_step
     # and frequency here as a basic requirement.
     # Other variants of the Constant schedule may have extra parameters tested.
-    # use_default_optimizer is False if we are testing optimizer function
+    # use_default_lr is False if we are testing lr_schedule function
     initial_drop_fraction = tf.Variable(0.5) # must be a Variable unlike the orthodox sparsity float
-    if optimizer is None and use_default_optimizer:
-      kwargs = {}
-      if clipnorm:
-        kwargs['clipnorm'] = clipnorm
-      if clipvalue:
-        kwargs['clipvalue'] = clipvalue
-      optimizer = self.lr_optimizer(**kwargs)
+    if lr_schedule is None and use_default_lr:
+      lr_schedule = self.lr_decay_fn
     if schedule_type == 'constant_rate':
       return schedule.ConstantSchedule(
           initial_drop_fraction, begin_step, end_step, frequency)
@@ -60,7 +55,7 @@ class ScheduleTest(test.TestCase, parameterized.TestCase):
           initial_drop_fraction, begin_step, end_step, frequency, k)
     elif schedule_type == 'lr_decay':
           return schedule.LRSchedule(
-            initial_drop_fraction, begin_step, end_step, frequency, optimizer)
+            initial_drop_fraction, begin_step, end_step, frequency, lr_schedule)
 
   @parameterized.named_parameters(
       {
@@ -205,7 +200,7 @@ class ScheduleTest(test.TestCase, parameterized.TestCase):
               lambda s: schedule.ExponentialSchedule(s, begin_step, end_step))
         elif schedule_type == 'lr_decay':
           self._validate_drop_ratio(
-              lambda s: schedule.LRSchedule(s, begin_step, end_step, 10, self.optimizer)) # TODO: None=optimizer arg to LR schedule test
+              lambda s: schedule.LRSchedule(s, begin_step, end_step, 10, self.lr_decay_fn)) # TODO: None=optimizer arg to LR schedule test
 
   # Tests to ensure begin_step, end_step, frequency are used correctly.
 
