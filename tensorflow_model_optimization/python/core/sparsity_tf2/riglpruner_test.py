@@ -491,7 +491,8 @@ class RiglPruningTest(test.TestCase, parameterized.TestCase):
 
   @parameterized.parameters(
     itertools.product(
-      ('random_normal', 'random_uniform', 'zeros', 'RANDOM_NORMAL', 'random_uniform', 'RANDOM_UNIFORM'),
+      ('random_normal', 'random_uniform', 'zeros', 'RANDOM_NORMAL', 
+      'random_uniform', 'RANDOM_UNIFORM', 'initial_value', 'INITIAL_VALUE'),
      (True, False))
   )
   def testZeroInitGrownConnectionsDistributions(self, reinit_method, use_function):
@@ -535,6 +536,7 @@ class RiglPruningTest(test.TestCase, parameterized.TestCase):
       num_grown = tf.ones((), dtype=tf.int32)
       weight_std_prior = tf.ones((), dtype=tf.float64)
       weight_mean_prior = tf.ones((), dtype=tf.float64)
+      weight_after = tf.ones(weight.get_shape(), dtype=tf.float64)
       # iterate until all mask updates are complete
       for i in tf.range(5):
         mask_before_update = optimizer.get_slot(weight, 'mask').read_value()
@@ -555,13 +557,14 @@ class RiglPruningTest(test.TestCase, parameterized.TestCase):
           weight_std_prior = curr_weight_std
           weight_mean_prior = curr_weight_mean
           num_grown = tf.math.reduce_sum(tf.cast(regrown_indices, tf.int32))
+          weight_after = weight.read_value()
         optimizer.iterations.assign_add(1)
-      return after_stdev, after_mean, num_grown, weight_std_prior, weight_mean_prior     
+      return after_stdev, after_mean, num_grown, weight_std_prior, weight_mean_prior, weight_after 
 
     if use_function:
-      after_stdev, after_mean, num_grown, weight_std_prior, weight_mean_prior = tf.function(train)(optimizer, weight, sparse_vars)
+      after_stdev, after_mean, num_grown, weight_std_prior, weight_mean_prior, weight_after = tf.function(train)(optimizer, weight, sparse_vars)
     else:
-      after_stdev, after_mean, num_grown, weight_std_prior, weight_mean_prior = train(optimizer, weight, sparse_vars)
+      after_stdev, after_mean, num_grown, weight_std_prior, weight_mean_prior, weight_after = train(optimizer, weight, sparse_vars)
     shapes = [(num_grown,), weight.get_shape()]
     if reinit_method.lower() == 'random_uniform':
       expected_dist = tf.random.uniform(shapes[0], minval=-weight_mean_prior, maxval=weight_mean_prior, dtype=weight_dtype, seed=0) 
@@ -569,13 +572,18 @@ class RiglPruningTest(test.TestCase, parameterized.TestCase):
       expected_dist = tf.random.normal(shapes[0], stddev=weight_std_prior, dtype=weight_dtype, seed=0)
     elif reinit_method.lower() == 'zeros':
       expected_dist = tf.zeros(weight.get_shape(), dtype=weight_dtype)
+    elif reinit_method.lower() == 'initial_value':
+      expected_dist = optimizer.get_slot(weight, 'initial_value').read_value()
     expected_stdev = tf.math.reduce_std(expected_dist)
     expected_mean = tf.math.reduce_mean(expected_dist)
-    if reinit_method in ('random_uniform', 'random_normal'):
+    if reinit_method.lower() in ('random_uniform', 'random_normal'):
       self.assertAllClose(after_stdev, expected_stdev, rtol=1.6e-1)
-    elif reinit_method in ('zeros'):
+    elif reinit_method.lower() in ('zeros'):
       self.assertEqual(after_stdev, expected_stdev)
       self.assertEqual(after_mean, expected_mean)
+    elif reinit_method.lower() in ('initial_value'):
+      updated_mask = optimizer.get_slot(weight, 'mask').read_value()
+      self.assertAllClose(tf.math.reduce_sum(weight_after).numpy(), tf.math.reduce_sum(expected_dist * updated_mask).numpy(), rtol=7.5e-2)
 
   @parameterized.parameters(
     ('ones',), ('zero',), (None,), (0,)
