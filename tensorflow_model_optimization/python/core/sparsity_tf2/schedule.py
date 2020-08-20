@@ -17,6 +17,7 @@
 import abc
 import six
 import tensorflow as tf
+import numpy as np
 
 @six.add_metaclass(abc.ABCMeta)
 class Schedule(object):
@@ -89,8 +90,8 @@ class Schedule(object):
 
   @staticmethod
   def _validate_ratio(sparsity, variable_name):
-    if not 0.0 <= sparsity < 1.0:
-      raise ValueError('{} must be in range [0,1)'.format(variable_name))
+    if not 0.0 <= sparsity <= 1.0:
+      raise ValueError('{} must be in range [0,1]'.format(variable_name))
 
   @abc.abstractmethod
   def __call__(self, step):
@@ -205,11 +206,17 @@ class CosineSchedule(Schedule):
         }
     }
 
+  def _decayed_learning_rate(self, alpha, step, decay_steps):
+    step = min(step, decay_steps)
+    cosine_decay = 0.5 * (1 + tf.math.cos(np.pi * step / decay_steps))
+    decayed = (1 - alpha) * cosine_decay + alpha
+    return self.alpha * decayed
+
   def _get_update_percentage(self, alpha, should_prune_in_step, step):
     annealed_alpha = tf.zeros_like(alpha)
     decay_steps = self.end_step - self.begin_step
     if should_prune_in_step:
-      annealed_alpha = tf.compat.v1.train.cosine_decay(alpha, step, decay_steps, name='cosine_drop_fraction')
+      annealed_alpha = self._decayed_learning_rate(alpha, step, decay_steps)
     return annealed_alpha
 
   def __call__(self, step):

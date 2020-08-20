@@ -17,6 +17,7 @@
 from absl.testing import parameterized
 import tensorflow as tf
 import functools
+import math
 
 from tensorflow.python.keras import keras_parameterized
 from tensorflow_model_optimization.python.core.sparsity_tf2 import schedule
@@ -29,7 +30,7 @@ class ScheduleTest(test.TestCase, parameterized.TestCase):
 
   def setUp(self):
     super(ScheduleTest, self).setUp()
-    self.decay_steps = tf.Variable(100) # number of steps to decay for
+    self.decay_steps = 100 # number of steps to decay for
     self.lr_decay_fn = tf.keras.experimental.CosineDecay(0.01, self.decay_steps)
     self.lr_schedule = functools.partial(tf.keras.optimizers.SGD, learning_rate=self.lr_decay_fn)
     self.optimizer = tf.keras.optimizers.SGD()
@@ -41,7 +42,7 @@ class ScheduleTest(test.TestCase, parameterized.TestCase):
     # and frequency here as a basic requirement.
     # Other variants of the Constant schedule may have extra parameters tested.
     # use_default_lr is False if we are testing lr_schedule function
-    initial_drop_fraction = tf.Variable(0.5) # must be a Variable unlike the orthodox sparsity float
+    initial_drop_fraction = 0.5
     if lr_schedule is None and use_default_lr:
       lr_schedule = self.lr_decay_fn
     if schedule_type == 'constant_rate':
@@ -158,9 +159,7 @@ class ScheduleTest(test.TestCase, parameterized.TestCase):
     with self.assertRaises(ValueError):
       schedule_construct_fn(-10.0)
 
-    # Should not be >= 1.0
-    with self.assertRaises(ValueError):
-      schedule_construct_fn(1.0)
+    # Should not be > 1.0
     with self.assertRaises(ValueError):
       schedule_construct_fn(10.0)
 
@@ -168,6 +167,7 @@ class ScheduleTest(test.TestCase, parameterized.TestCase):
     schedule_construct_fn(0.001)
     schedule_construct_fn(0.5)
     schedule_construct_fn(0.99)
+    schedule_construct_fn(1.0)
   
 
   @parameterized.named_parameters(
@@ -279,7 +279,7 @@ class ConstantScheduleTest(tf.test.TestCase, parameterized.TestCase):
     self.drop_ratio = 0.5
 
   @keras_parameterized.run_all_keras_modes
-  def testPrunesForeverIfEndStepIsNegativeOne(self):
+  def testUpdatesForeverIfEndStepIsNegativeOne(self):
     decay = schedule.ConstantSchedule(self.drop_ratio, 0, -1, 10)
 
     step_10000 = 10000
@@ -292,7 +292,7 @@ class ConstantScheduleTest(tf.test.TestCase, parameterized.TestCase):
     self.assertAllClose(self.drop_ratio, decay(step_100000000)[1])
 
   @keras_parameterized.run_all_keras_modes
-  def testPrunesWithConstantSchedule(self):
+  def testUpdatesWithConstantSchedule(self):
     decay = schedule.ConstantSchedule(self.drop_ratio, 100, 200, 10)
 
     step_100 = 100
@@ -319,13 +319,21 @@ class ConstantScheduleTest(tf.test.TestCase, parameterized.TestCase):
     self.assertEqual(decay.__dict__, decay_deserialized.__dict__)
 
 
+#TODO(xwinxu): write the cosine, exponential, and lr tests
 # class CosineScheduleTest(tf.test.TestCase, parameterized.TestCase):
 #   def setUp(self):
 #     super(CosineScheduleTest, self).setUp()
 #     self.drop_ratio = 0.5
 
+
+#   def np_cosine_decay(self, step, decay_steps, alpha=0.0):
+#     step = min(step, decay_steps)
+#     completed_fraction = step / decay_steps
+#     decay = 0.5 * (1.0 + math.cos(math.pi * completed_fraction))
+#     return (1.0 - alpha) * decay + alpha
+
 #   @keras_parameterized.run_all_keras_modes
-#   def testPrunesForeverIfEndStepIsNegativeOne(self):
+#   def testUpdatesForeverIfEndStepIsNegativeOne(self):
 #     decay = schedule.CosineSchedule(self.drop_ratio, 0, -1, 10)
 
 #     step_10000 = 10000
@@ -334,20 +342,17 @@ class ConstantScheduleTest(tf.test.TestCase, parameterized.TestCase):
 #     self.assertTrue(decay(step_10000)[0])
 #     self.assertTrue(decay(step_100000000)[0])
 
-#     self.assertAllClose(self.drop_ratio, decay(step_10000)[1])
-#     self.assertAllClose(self.drop_ratio, decay(step_100000000)[1])
-
 #   @keras_parameterized.run_all_keras_modes
-#   def testPrunesWithCosineSchedule(self):
-#     decay = schedule.CosineSchedule(self.drop_ratio, 100, 200, 10)
+#   def testUpdatesWithCosineSchedule(self):
+#     decay = schedule.CosineSchedule(0.1, 0, 1500, 250)
 
-#     step_100 = 100
-#     step_110 = 110
-#     step_200 = 200
-
-#     self.assertAllClose(self.drop_ratio, decay(step_100)[1])
-#     self.assertAllClose(self.drop_ratio, decay(step_110)[1])
-#     self.assertAllClose(self.drop_ratio, decay(step_200)[1])
+#     # TODO(xwinxu): add a check for this test
+#     for step in range(0, 1501, 250):
+#       decayed_ratio = decay(step)[1]
+#       # print(f"decayed ratio {decayed_ratio}")
+#       expected = self.np_cosine_decay(step, 1500)
+#       # print(f"expected {expected}")
+#       self.assertAllClose(expected, decayed_ratio)
 
 #   def testSerializeDeserialize(self):
 #     decay = schedule.CosineSchedule(0.7, 10, 20, 10)

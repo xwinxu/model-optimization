@@ -86,7 +86,9 @@ py_library(
     srcs = ["schedule.py"],
     srcs_version = "PY2AND3",
     visibility = ["//visibility:public"],
-    deps = [],
+    deps = [
+        # numpy dep1,
+    ],
 )
 
 py_test(
