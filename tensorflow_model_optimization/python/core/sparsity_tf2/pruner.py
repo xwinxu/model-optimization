@@ -62,7 +62,7 @@ class LowMagnitudePruner(Pruner):
     """
     super(LowMagnitudePruner, self).__init__()
     self._pruning_schedule = pruning_schedule
-    self._block_size = block_size
+    self._block_size = tuple(block_size)
     self._block_pooling_type = block_pooling_type
 
   def _validate_block(self, pruning_vars):

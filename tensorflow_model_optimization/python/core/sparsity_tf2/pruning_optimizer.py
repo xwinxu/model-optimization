@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-"""Meta-optimizer to interfece with custom sparse training pruners."""
+"""Optimizer wrapper that adds sparsity training via pruning and/or growing
+to other optimizers.
+"""
 
 from __future__ import absolute_import
 from __future__ import division
@@ -31,23 +33,27 @@ class PruningOptimizer(tf.keras.optimizers.Optimizer):
     self._pruning_config = pruning_config
 
   def get_config(self):
-    config = {'name': self._name}
-    if self.clipnorm is not None:
-      config['clipnorm'] = self.clipnorm
-    if self.clipvalue is not None:
-      config['clipvalue'] = self.clipvalue
-    config['_optimizer'] = self._optimizer
-    config['_pruning_config'] = self._pruning_config
-    return config
+    # TODO(xwinxu/kaftan): implement serialization
+    pass
+    # config = {'name': self._name}
+    # if self.clipnorm is not None:
+    #   config['clipnorm'] = self.clipnorm
+    # if self.clipvalue is not None:
+    #   config['clipvalue'] = self.clipvalue
+    # config['_optimizer'] = self._optimizer
+    # config['_pruning_config'] = self._pruning_config
+    # return config
   
   def from_config(cls, config, custom_objects=None):
-    if "lr" in config:
-      config["learning_rate"] = config.pop("lr")
-    if "learning_rate" in config:
-      if isinstance(config["learning_rate"], dict):
-        config["learning_rate"] = learning_rate_schedule.deserialize(
-            config["learning_rate"], custom_objects=custom_objects)
-    return cls(**config)
+    # TODO(xwinxu/kaftan): implement serialization
+    pass
+    # if "lr" in config:
+    #   config["learning_rate"] = config.pop("lr")
+    # if "learning_rate" in config:
+    #   if isinstance(config["learning_rate"], dict):
+    #     config["learning_rate"] = learning_rate_schedule.deserialize(
+    #         config["learning_rate"], custom_objects=custom_objects)
+    # return cls(**config)
 
   def configure(self, model):
     self._pruning_config.configure(model)

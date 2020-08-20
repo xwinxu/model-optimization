@@ -73,20 +73,22 @@ class RiGLPruner(pruner.Pruner):
     self.block_pooling_type = block_pooling_type
     self._seed = seed
     self._noise_std = noise_std
-    self._drop_regrow_reinit = reinit
-    self._grow_init_method = grow_init
-    valid_grow_inits = ('zeros', 'random_normal', 'random_uniform')
+    self._drop_regrow_reinit = reinit # TODO(xwinxu): re-assign to initial_value
+    valid_grow_inits = ('zeros', 'random_normal', 'random_uniform', 'initial_value')
     try:
-      if self._grow_init_method.lower() not in valid_grow_inits:
-        raise ValueError(f'The initialization for growing {grow_init} is not a valid option ({valid_grow_inits})')
+      self._grow_init_method = grow_init.lower()
     except:
-      raise ValueError(f"Check that the grow_init method is one of {valid_grow_inits}")
+      raise ValueError(f"Check that the grow_init method is type str and one of {valid_grow_inits}")
+    if self._grow_init_method not in valid_grow_inits:
+      raise ValueError(f'The initialization for growing {grow_init} is not a valid option ({valid_grow_inits})')
+    
   
   def create_slots(self, optimizer, var):
     base_dtype = var.dtype
     _deterministic_initializer = sparse_utils.PermuteOnes(self.target_sparsity)
     deterministic_initializer = functools.partial(_deterministic_initializer, dtype=base_dtype, seed=self._seed)
     optimizer.add_slot(var, 'mask', initializer=deterministic_initializer)
+    optimizer.add_slot(var, 'initial_value', initializer=var.read_value())
 
   def _validate_block(self, update_vars):
     if self._block_size != (1, 1):
@@ -169,6 +171,9 @@ class RiGLPruner(pruner.Pruner):
       divisor = 1.
       grow_tensor = self._random_uniform(step, weight.get_shape(), minval=-mean, maxval=mean, 
                                         dtype=weight.dtype, seed=self._seed) / divisor
+    elif method == 'initial_value':
+      # TODO(xwinxu): incorporate the initial values from slot variables
+      pass
     return grow_tensor
 
   def _generic_top_k(self, scores, mask, n_to_modify, n_total):
@@ -247,18 +252,21 @@ class RiGLPruner(pruner.Pruner):
 
     dropped_mask = self._generic_top_k(drop_scores, mask, n_keep, n_total)
 
-    if grow_scores is not None: # case where there is no growing
-      grow_tensor, grown_mask, new_connections = self._grow_connections(
-                                    step, weight, mask, grow_scores, dropped_mask, n_prune, n_total)
-      new_weights = tf.where(new_connections, grow_tensor, weight)
-      # update weights
-      weight.assign(new_weights)
-      reset_momentum = True
-      mask_combined = tf.reshape(dropped_mask + grown_mask, mask.shape)
-    else:
-      mask_combined = tf.reshape(dropped_mask, mask.shape)
-      reset_momentum = False
-      new_connections = tf.zeros_like(mask, dtype=tf.bool)
+    # TODO(xwinxu): address case where there is no growing (just pruning), 
+    # i.e. if grow_scores is not None: ...
+    # some possible APIs to consider are: 1) `grow_score_fn` passed into the
+    # constructor, or 2) `grow_enabled` bool flag to aid with customizable grow scores.
+    grow_tensor, grown_mask, new_connections = self._grow_connections(
+                                  step, weight, mask, grow_scores, dropped_mask, n_prune, n_total)
+    new_weights = tf.where(new_connections, grow_tensor, weight)
+    # update weights
+    weight.assign(new_weights)
+    reset_momentum = True
+    mask_combined = tf.reshape(dropped_mask + grown_mask, mask.shape)
+    # else:
+    #   mask_combined = tf.reshape(dropped_mask, mask.shape)
+    #   reset_momentum = False
+    #   new_connections = tf.zeros_like(mask, dtype=tf.bool)
 
     return reset_momentum, mask_combined, new_connections
 
